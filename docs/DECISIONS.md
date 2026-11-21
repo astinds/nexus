@@ -179,3 +179,60 @@ mismatch), so a design that hard-depends on it cannot even be smoke-tested here.
 **Consequences.** Local development and CI work without native libraries; production gets
 the better engine. Engine identity is recorded in `metadata.engine` so extraction quality
 is auditable.
+
+---
+
+## ADR-013 — Next.js App Router + SWC build constraint on ARM64 Android
+
+**Context.** Stage 5A initializes Next.js 14 App Router for the frontend. Next.js 14.1.3
+defaults to SWC as its compiler, which requires native binary packages per platform.
+On ARM64 Android, `@next/swc-android-arm64` is not available in npm (404), breaking
+`next build`. `webpackBuildWorker: true` (default) also causes `EPIPE` crashes in
+Node.js worker threads on this device.
+
+**Decision.** Configure `experimental.useWasmBinary: true` and
+`experimental.webpackBuildWorker: false` in `next.config.mjs`, and install
+`@next/swc-wasm-nodejs` manually into `frontend/node_modules`. This enables the WASM
+SWC fallback path instead of attempting a native binary download.
+
+**Consequences.** The frontend builds using SWC WASM fallback on ARM64 Android rather
+than native SWC binaries. This is an environment-specific workaround; production builds
+(arm64/x86 on standard CI) use native SWC normally.
+
+**Alternatives rejected.** Webpack compiler (not available in Next.js 14 default);
+Turbopack (experimental, uses SWC too); older Next.js versions (too invasive).
+
+---
+
+## ADR-014 — Stage 5A Frontend Architecture
+
+**Context.** Stage 5A implements the NEXUS frontend core: shell, dashboard, library,
+search, omni-capture, theme engine, cold-start wake banner, and passcode gate.
+
+**Decision.**
+
+- **Next.js App Router** with TypeScript strict mode, Tailwind CSS driven by CSS custom properties
+- **Typed API client** (`src/lib/types.ts` + `src/lib/api.ts`) matching FastAPI `/api/v1`
+  schemas exactly: items, ingest, search, dashboard, auth/session, health, preferences,
+  saved views, workspaces, blueprints, collections, tags, relation types
+- **Theme engine** initialized from `GET /api/v1/preferences` with clean dark defaults
+  (`--bg`, `--surface`, `--accent`, `--font-reading`, `--reading-width`, `--font-scale`)
+- **Cold-start wake banner** ("Waking up NEXUS engine…") with retry when health/session
+  is unreachable or degraded
+- **Passcode gate** wired to `/api/v1/auth/session`; auto-bypassed in dev open mode
+- **Responsive minimalist dark shell**: mobile-first bottom/drawer nav + desktop sidebar,
+  workspace switcher, pinned smart lenses, `Cmd/Ctrl+K` quick search, persistent
+  Omni-Capture trigger
+- **Dashboard** (`/`): totals by format/blueprint/triage, Inbox count, Continue Reading,
+  Recently Added, Recent Activity, Quick Capture, Search bar
+- **Omni-Capture Modal**: Upload File, Clip URL with Paste Article fallback tab,
+  New Markdown Note — all wired to backend ingest endpoints
+- **Library** (`/library`): Table/Cards toggle, filters for Format/Blueprint/Triage/
+  Time Budget/Collection/Tag, pagination, "Save as Smart Lens" (`POST /api/v1/saved-views`)
+- **Search** (`/search`): multi-faceted full-text search with `ts_headline` snippets linking
+  to `/items/[id]`
+
+**Consequences.** Every component targets <= 300 lines, mobile-first at 320px, zero
+decorative clutter or unnecessary animations. Stage 5B (Item Inspector, Collections/
+Tags Manager, Studio, Settings, PWA Share Target) and Stage 6 (smoke test/deployment
+docs) are deliberately out of scope for Stage 5A.

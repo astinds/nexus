@@ -15,7 +15,8 @@ Last updated: Stage 4 complete (backend core, all extractors, full-text search, 
 | 2 | Architecture & contract blueprint | ✅ complete |
 | 3 | Repo memory, schema, passcode gate, core backend | ✅ complete |
 | 4 | Extractors, tsvector search, lossless export | ✅ complete |
-| 5 | Frontend core, PWA, mobile-safe inspector | ⬜ not started |
+| 5A | Frontend core: shell, dashboard, library, search, omni-capture, theme, auth | ✅ complete |
+| 5B | Item Inspector, Collections/Tags Manager, Studio, Settings, PWA Share Target | ⬜ not started |
 | 6 | Self-verifying smoke test & handoff docs | ⬜ not started |
 
 ---
@@ -85,6 +86,48 @@ Lint:
 $ python3 -m pyflakes backend/app backend/tests scripts
 (no output)
 ```
+
+---
+
+## Stage 5A — Frontend Core Shell, Capture, Library & Search
+
+### What was built (Stage 5A)
+
+- **Next.js 14 App Router** with TypeScript strict mode, Tailwind CSS driven by CSS custom properties
+- **Typed API client** (`src/lib/types.ts` + `src/lib/api.ts`) matching FastAPI `/api/v1` schemas exactly
+- **Theme engine** (`src/lib/useTheme.ts`): live CSS custom properties (`--bg`, `--surface`,
+  `--accent`, `--font-reading`, `--reading-width`, `--font-scale`) initialized from `GET /api/v1/preferences`
+  with clean dark defaults; supports runtime updates and persists to backend
+- **Cold-start wake + health** (`src/lib/useHealth.ts` + `src/components/WakeBanner.tsx`):
+  calm "Waking up NEXUS engine…" banner with retry when health/session is waking/unreachable/degraded
+- **Passcode gate** (`src/components/PasscodeGate.tsx`): wired to `/api/v1/auth/session`;
+  auto-bypassed when backend reports open dev mode
+- **Responsive minimalist dark shell** (`src/components/Shell.tsx`): mobile-first bottom nav +
+  desktop sidebar, workspace switcher, pinned smart lenses, `Cmd/Ctrl+K` quick search, persistent
+  Omni-Capture trigger
+- **Dashboard** (`/`): totals by format/blueprint/triage, Inbox count, Continue Reading, Recently Added,
+  Recent Activity, Quick Capture, Search bar
+- **Omni-Capture Modal** (`src/components/OmniCaptureModal.tsx`): Upload File (PDF/DOCX/MD/TXT/HTML/CSV/JSON
+  with size validation), Clip URL with Paste Article fallback tab, New Markdown Note (`POST /api/v1/items`)
+- **Library** (`/library`): Table/Cards toggle, filters for Format/Blueprint/Triage/Time Budget/
+  Collection/Tag, pagination, "Save as Smart Lens" (`POST /api/v1/saved-views`)
+- **Search** (`/search`): multi-faceted full-text search wired to `GET /api/v1/search` with
+  `ts_headline` snippets linking to `/items/[id]`
+- **Item placeholder** (`/items/[id]`): minimal stub for Stage 5B inspector
+
+### Verification
+
+```
+$ cd nexus/frontend && node node_modules/typescript/bin/tsc --noEmit
+(no output — exit 0)
+```
+
+### Known limitation
+
+- **Next.js production build**: native SWC build fails on ARM64 Android because `@next/swc-android-arm64`
+  is not published to npm (404). Workaround: `experimental.useWasmBinary: true` and
+  `@next/swc-wasm-nodejs` installed manually, plus `webpackBuildWorker: false` to avoid EPIPE.
+  The `next build` command still fails at the native download step; `tsc --noEmit` passes.
 
 ---
 
