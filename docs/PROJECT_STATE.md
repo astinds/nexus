@@ -3,7 +3,8 @@
 Update this file at the end of **every** stage. A future model must be able to resume
 from this page alone.
 
-Last updated: Stage 4 complete (backend core, all extractors, full-text search, lossless export).
+Last updated: Stage 5A complete (frontend core shell, capture, library, search, theme, auth).
+Stage 5A commit: `a51ed8a`
 
 ---
 
