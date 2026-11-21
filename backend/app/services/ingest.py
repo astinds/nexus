@@ -14,6 +14,7 @@ import psycopg
 
 from ..errors import ApiError, bad_request, not_found, unprocessable
 from ..extractors import ExtractionError, ExtractionResult, resolve
+from ..extractors.web import WebArticleExtractor
 from ..formats import FILE_ONLY_FORMATS, format_from_filename
 from ..models import (
     IngestResult,
@@ -31,9 +32,16 @@ log = logging.getLogger(__name__)
 
 
 class IngestService:
-    def __init__(self, storage: BaseStorage, *, max_upload_bytes: int) -> None:
+    def __init__(
+        self,
+        storage: BaseStorage,
+        *,
+        max_upload_bytes: int,
+        web_timeout_seconds: float = 20.0,
+    ) -> None:
         self.storage = storage
         self.max_upload_bytes = max_upload_bytes
+        self.web_timeout_seconds = web_timeout_seconds
 
     # ------------------------------------------------------------------ helpers
     def _resolve_workspace(self, cur: psycopg.Cursor, workspace_id: UUID | None) -> dict:
@@ -256,17 +264,71 @@ class IngestService:
         return self._result(row, extraction, created, duplicate=False)
 
     def ingest_url(self, cur: psycopg.Cursor, payload: IngestUrlRequest) -> IngestResult:
-        """Stage 4 wires the real fetcher. Until then this is an honest 501.
+        """Fetch, extract, keep an archival snapshot, then persist.
 
-        The manual paste fallback (ingest_text with is_paste_fallback=True) is the
-        supported route for bot-blocked sites and always works.
+        The snapshot is the point: a dead link must not destroy the reference, so the
+        raw HTML is stored next to the extracted text and linked as `snapshot_uri`.
         """
-        raise ApiError(
-            501,
-            "web_fetch_not_ready",
-            "URL capture lands with the WebArticleExtractor in Stage 4. "
-            "Use 'Paste Article / Transcript' for now.",
+        workspace = self._resolve_workspace(cur, payload.workspace_id)
+        try:
+            raw_html, content_type = WebArticleExtractor.fetch(
+                payload.url, timeout=self.web_timeout_seconds
+            )
+        except ExtractionError as exc:
+            raise ApiError(
+                502,
+                "fetch_failed",
+                str(exc),
+                detail={"url": payload.url, "fallback": "POST /api/v1/ingest with text"},
+            )
+
+        extraction = self._run_extractor(
+            source_format=SourceFormat.web_article,
+            text=None,
+            data=raw_html,
+            filename=None,
+            mime_type=content_type,
         )
+        if payload.title:
+            extraction.title = payload.title
+
+        body_text = "\n\n".join(segment.content for segment in extraction.segments)
+        content_hash = sha256_text(body_text)
+        duplicate = self._find_duplicate(cur, workspace["id"], content_hash)
+        if duplicate is not None:
+            return self._duplicate_result(cur, duplicate)
+
+        snapshot_uri = self._store_snapshot(
+            workspace=workspace, content_hash=content_hash, raw=raw_html
+        )
+        title = (payload.title or extraction.title or humanize_title(payload.url)).strip()
+        row, created = self._persist(
+            cur,
+            workspace=workspace,
+            extraction=extraction,
+            source_format=SourceFormat.web_article,
+            title=title,
+            source_uri=payload.url,
+            snapshot_uri=snapshot_uri,
+            mime_type="text/html",
+            file_size=len(raw_html),
+            content_hash=content_hash,
+            blueprint_id=payload.blueprint_id,
+            triage_status=payload.triage_status.value,
+            tag_names=payload.tags,
+            collection_ids=payload.collection_ids,
+            metadata={"ingest": "url", "url": payload.url, "snapshot": True},
+        )
+        return self._result(row, extraction, created, duplicate=False)
+
+    def _store_snapshot(self, *, workspace: dict, content_hash: str, raw: bytes) -> str | None:
+        key = f"{workspace['slug']}/{content_hash[:16]}/snapshot.html"
+        try:
+            return self.storage.put(key, raw, "text/html").uri
+        except StorageError as exc:
+            # The item is still worth keeping; say so instead of failing the capture.
+            log.warning("archival snapshot could not be stored: %s", exc)
+            return None
 
     # -------------------------------------------------------------------- output
     @staticmethod

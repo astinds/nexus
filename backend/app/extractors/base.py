@@ -52,6 +52,9 @@ class ExtractionResult:
     status: ProcessingStatus = ProcessingStatus.ready
     warnings: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Raw bytes kept for link-rot protection (web clips). IngestService stores
+    # this as items.snapshot_uri; it is never written into a JSON column.
+    archival: bytes | None = None
 
     @property
     def word_count(self) -> int:

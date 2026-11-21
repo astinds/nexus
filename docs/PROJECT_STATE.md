@@ -3,7 +3,7 @@
 Update this file at the end of **every** stage. A future model must be able to resume
 from this page alone.
 
-Last updated: Stage 3 complete (backend core).
+Last updated: Stage 4 complete (backend core, all extractors, full-text search, lossless export).
 
 ---
 
@@ -14,7 +14,7 @@ Last updated: Stage 3 complete (backend core).
 | 1 | Environment & wheel feasibility | ✅ complete |
 | 2 | Architecture & contract blueprint | ✅ complete |
 | 3 | Repo memory, schema, passcode gate, core backend | ✅ complete |
-| 4 | Extractors, tsvector search, lossless export | ⬜ not started |
+| 4 | Extractors, tsvector search, lossless export | ✅ complete |
 | 5 | Frontend core, PWA, mobile-safe inspector | ⬜ not started |
 | 6 | Self-verifying smoke test & handoff docs | ⬜ not started |
 
@@ -38,34 +38,46 @@ Last updated: Stage 3 complete (backend core).
 
 - **Auth** (`auth.py`): passcode gate, `X-Nexus-Key` header or `nexus_session` cookie
   (HMAC of a label keyed by the passcode), `require_access` dependency, open dev mode.
-- **API** (36 paths under `/api/v1`, `docs/` PAGES: see `/docs`):
-  `health`, `meta`, `auth/session` (GET/POST/DELETE), workspaces, blueprints,
-  collections (+`/tree`), tags (+`/merge`), relation-types, items (+detail, triage,
-  progress, content, links, segments, download), saved-views (+pin), prompt-templates,
-  prompt-context, preferences, dashboard, activity, ingest (+`/ingest/url`,
-  `/ingest/formats`).
-- **Services**: `ingest.py` (dedupe by SHA-256, extraction, persistence),
-  `items.py` (detail assembly, triage, progress, note re-index, links),
-  `catalog.py` (workspaces, blueprints, collections, tags+merge, relation types),
-  `studio.py` (smart lenses, prompts, preferences).
+- **API** (39 paths under `/api/v1`): `health`, `meta`, `auth/session` (GET/POST/DELETE),
+  workspaces, blueprints, collections (+`/tree`), tags (+`/merge`), relation-types,
+  items (+detail, triage, progress, content, links, segments, download), saved-views
+  (+pin), prompt-templates, prompt-context, preferences, dashboard, activity, ingest
+  (+`/ingest/url`, `/ingest/formats`), search, export (+`/export/library`).
+- **Services**: `ingest.py` (dedupe by SHA-256, extraction, persistence, URL fetch with
+  archival snapshot), `items.py` (detail assembly, triage, progress, note re-index,
+  links), `catalog.py` (workspaces, blueprints, collections, tags+merge, relation types),
+  `studio.py` (smart lenses, prompts, preferences), `search.py` (PostgreSQL full-text via
+  `websearch_to_tsquery` + `ts_headline`, facet counts), `export.py` (Markdown+YAML,
+  JSON, BibTeX/APA/MLA, full-library backup ZIP).
 - **Repositories**: `base.py` (Query builder, whitelisted `order_by`, helpers),
   `items.py`, `tags.py`, `collections.py`, `workspaces.py`, `blueprints.py`,
   `relations.py`, `studio.py`, `activity.py`.
 - **Extractors**: `base.py` (contract + registry), `text.py`
-  (`TextStructuredExtractor`: md/txt/html/csv/json), `note.py` (`NativeNoteExtractor`).
+  (`TextStructuredExtractor`: md/txt/html/csv/json), `note.py` (`NativeNoteExtractor`),
+  `pdf.py` (`PdfExtractor`: PyMuPDF primary → pypdf fallback; 1-based pages; vector-only
+  pages flagged scanned via `page.get_contents().get_data()` bytes check; per-page
+  `extraction_status` with `failed` for errors; `engine` field reports actual engine),
+  `docx.py` (`DocxExtractor`: heading sections + tables as pipe-separated rows; synthetic
+  preamble section dropped when document opens with a heading), `web.py`
+  (`WebArticleExtractor`: trafilatura → BeautifulSoup → text; archival snapshot via
+  `ExtractionResult.archival`; manual paste fallback via `_from_text`;
+  `WebArticleExtractor.fetch()` with timeout, headers, status handling; MAX_HTML_BYTES
+  guard; honest error messages directing to manual paste fallback).
 - **Storage**: `base.py` (contract), `local.py`, `supabase.py` (raw httpx REST,
   signed URLs, private bucket).
 
-### Tests — 81 passing, no database required
+### Tests — 130 passing, no database required
 
 ```
 $ cd backend && python3 -m pytest
-81 passed, 1 warning in 3.36s
+130 passed, 1 warning in 11s
 ```
 
-Coverage by file: `test_text_utils.py` (12), `test_models.py` (14),
+Coverage by file (approximate): `test_text_utils.py` (12), `test_models.py` (14),
 `test_auth_gate.py` (11), `test_storage.py` (13), `test_extractors_text.py` (14),
-`test_migrations_sql.py` (12), `test_repositories_sql.py` (11, approximate split).
+`test_extractors_pdf.py` (10), `test_extractors_docx.py` (8), `test_extractors_web.py` (12),
+`test_migrations_sql.py` (12), `test_repositories_sql.py` (10), `test_export.py` (19),
+`test_search_sql.py` (8).
 
 Lint:
 
@@ -76,7 +88,7 @@ $ python3 -m pyflakes backend/app backend/tests scripts
 
 ---
 
-## Active caveats and fallbacks (read before Stage 4)
+## Active caveats and fallbacks (read before Stage 5)
 
 ### 1. No PostgreSQL server available on this device
 
@@ -93,7 +105,7 @@ Consequences:
 - `scripts/apply_migrations.py` is written and dry-run verified; it needs a real
   `DATABASE_URL` (Supabase) to be proven.
 
-**Before Stage 4 or at the start of deployment:** run
+**Before Stage 5 or at the start of deployment:** run
 `DATABASE_URL=... python scripts/apply_migrations.py` once and paste the output into
 this file.
 
@@ -109,7 +121,7 @@ than the installed `libc++ (30)`. The `tesseract` CLI is broken for the same rea
 Mitigations already in place:
 - `python-pymupdf` remains installed for a future libc++ upgrade.
 - `pypdf` is installed and usable.
-- Stage 4's `PdfExtractor` must try `pymupdf` first and fall back to `pypdf`, recording
+- `PdfExtractor` tries `pymupdf` first and falls back to `pypdf`, recording
   the engine actually used in `ExtractionResult.engine` and in item metadata.
 
 Do not "fix" this by hand-patching libraries or prepending `LD_LIBRARY_PATH`.
@@ -152,21 +164,29 @@ part of the repo and not required by the app.
 
 ## Next exact step
 
-Stage 4, in this order:
+Stage 5: Frontend core, PWA + mobile-safe inspector.
 
-1. `backend/app/extractors/pdf.py` — `PdfExtractor`: `import pymupdf` inside a
-   `try/except ImportError`, `with pymupdf.open(...)`, 1-based pages, per-page
-   `is_scanned` (page has no text but has images), `extraction_status`, `engine` field
-   reporting `pymupdf` or `pypdf`; close handles immediately.
-2. `backend/app/extractors/docx.py` — headings -> segments via `python-docx`.
-3. `backend/app/extractors/web.py` — `httpx` + `trafilatura` (BeautifulSoup fallback),
-   archival snapshot to storage, `ingest_url` replaces its current 501.
-4. `backend/app/services/search.py` + `/api/v1/search` — `websearch_to_tsquery`,
-   `ts_headline` snippets, facet counts, filters.
-5. `backend/app/services/export.py` + routes — Markdown+YAML, JSON, BibTeX/APA/MLA,
-   full-library backup ZIP.
-6. Register the new extractors in `app/extractors/__init__.py`; extend tests; rerun
-   pytest and pyflakes; update this file.
+1. `frontend/` Next.js (App Router) + TypeScript + Tailwind shell.
+   - `next.config.js` rewrites `/api/v1/*` to `API_BACKEND_URL`.
+   - CSS custom properties for live typography/dark palette/accent/reading-width.
+   - `manifest.json` + Share Target `/capture?title=...&text=...&url=...` for Android PWA.
+   - Cold-start wake banner: `/api/v1/health` shows `status: "degraded"` when DB down;
+     UI polls `/api/v1/auth/session` and shows "Waking up NEXUS…" instead of error.
+2. Pages: Dashboard (stats, continue reading, recently added), Library (Compact Table /
+   Reading Cards layouts, filters: Format, Blueprint, Triage, Time Budget, Collection, Tag;
+   "Save as Smart Lens"), Search (multi-faceted with `ts_headline` snippets), Omni-Capture
+   launcher (File | Paste URL | Manual Paste | New Markdown), Item Inspector (PDF.js
+   canvas viewer + segment list with `is_scanned`/failed banner; Markdown/Note inline edit
+   with re-index; Universal drawer: Triage, Blueprint fields, Collections, Tags, Typed
+   Links, Prompt Context copy, Export buttons), Collections tree, Tag Manager (+aliases,
+   Merge), Studio (Blueprints, Relation Types, Prompt Templates), Settings (Appearance
+   customizer, Storage health, Full Backup Export, API docs).
+3. Run tests: `cd frontend && npm test` (if configured) + full E2E smoke test from
+   `scripts/smoke_test.py` (create 2-page PDF with text+image page, upload, verify
+   `is_scanned`, search Page 1 text → exact page match, export Markdown+YAML, delete).
+4. Finalize: `README.md` (free Vercel + Render + Supabase deploy steps + optional
+   GitHub Actions keep-alive), `AGENTS.md`, `docs/PROJECT_STATE.md`,
+   `docs/EXTENSION_GUIDE.md`.
 
 ---
 

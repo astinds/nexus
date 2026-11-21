@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import catalog, ingest, items, studio, system
+from . import catalog, ingest, items, search, studio, system
 
 api_router = APIRouter()
 api_router.include_router(system.router)
@@ -12,5 +12,6 @@ api_router.include_router(catalog.router)
 api_router.include_router(items.router)
 api_router.include_router(studio.router)
 api_router.include_router(ingest.router)
+api_router.include_router(search.router)
 
 __all__ = ["api_router"]

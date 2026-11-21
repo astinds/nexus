@@ -14,6 +14,7 @@ from ..config import Settings, get_settings
 from ..db import Database
 from ..errors import ApiError
 from ..extractors import available as available_extractors
+from ..extractors import engine_status
 from ..storage import BaseStorage
 from .deps import get_database, get_storage_dep
 
@@ -41,6 +42,7 @@ def health(
         "database": database,
         "storage": storage_health,
         "extractors": available_extractors(),
+        "engines": engine_status(),
         "limits": {
             "max_upload_mb": settings.max_upload_mb,
             "page_size_default": 50,

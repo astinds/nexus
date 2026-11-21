@@ -39,7 +39,11 @@ def get_ingest_service(
     settings: Settings = Depends(get_settings),
     storage: BaseStorage = Depends(get_storage_dep),
 ) -> IngestService:
-    return IngestService(storage, max_upload_bytes=settings.max_upload_bytes)
+    return IngestService(
+        storage,
+        max_upload_bytes=settings.max_upload_bytes,
+        web_timeout_seconds=settings.web_fetch_timeout_seconds,
+    )
 
 
 def extractor_inventory() -> list[dict[str, object]]:

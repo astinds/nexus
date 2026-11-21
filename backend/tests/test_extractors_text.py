@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.extractors import available, resolve
 from app.extractors.note import NativeNoteExtractor
 from app.extractors.text import TextStructuredExtractor
@@ -100,12 +102,16 @@ def test_registry_lists_available_extractors() -> None:
     assert "text_structured" in names
 
 
+def test_registry_routes_each_container_to_its_own_extractor() -> None:
+    assert resolve(source_format=SourceFormat.pdf).name == "pdf"
+    assert resolve(source_format=SourceFormat.docx).name == "docx"
+    assert resolve(source_format=SourceFormat.web_article).name == "web_article"
+    assert resolve(filename="x.docx").name == "docx"
+
+
 def test_unknown_format_raises_extraction_error() -> None:
     from app.extractors import ExtractionError
 
-    try:
-        resolve(source_format=SourceFormat.pdf)
-    except ExtractionError as exc:
-        assert "no extractor" in str(exc)
-    else:  # Stage 4 registers the PDF extractor; then this must not pass silently
-        raise AssertionError("expected ExtractionError for pdf before Stage 4")
+    with pytest.raises(ExtractionError) as excinfo:
+        resolve(mime_type="application/vnd.oasis.opendocument.text", filename="x.odt")
+    assert "no extractor" in str(excinfo.value)
