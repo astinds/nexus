@@ -1,0 +1,38 @@
+# NEXUS backend dependencies for local development and tests, including the
+# Android/Termux environment this repo is developed on.
+#
+# Install on Android/Termux (verified working, cp314 / android_24_arm64_v8a):
+#   pip install --only-binary=:all: \
+#       --extra-index-url https://termux-user-repository.github.io/pypi/ \
+#       -r requirements-dev.txt
+#   pkg install python-pymupdf libpq        # native bits with no PyPI wheel
+#
+# Notes for this environment:
+#   * --only-binary=:all: is required: source builds fail (no /bin/sh).
+#   * The Termux User Repository (TUR) index supplies pydantic-core, lxml, ... .
+#   * psycopg[binary] does not exist for bionic: the pure-Python psycopg plus the
+#     libpq package is used instead (same driver, same API).
+#   * PyMuPDF is only importable when the Termux package loads; see
+#     docs/PROJECT_STATE.md ("known environment caveats"). The PdfExtractor
+#     automatically falls back to pypdf.
+
+fastapi>=0.115,<1.0
+uvicorn>=0.30,<1.0
+pydantic>=2.7,<3.0
+pydantic-settings>=2.2,<3.0
+python-multipart>=0.0.9
+httpx>=0.27,<1.0
+psycopg>=3.2,<4.0
+psycopg-pool>=3.2,<4.0
+
+# Extractors
+pypdf>=5.0
+python-docx>=1.1
+beautifulsoup4>=4.12
+lxml>=5.2
+trafilatura>=1.9
+
+# Tests and schema linting
+pytest>=8.0
+pytest-asyncio>=0.23
+sqlglot>=25.0            # parses the migration SQL and the query strings in tests

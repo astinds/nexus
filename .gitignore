@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Secrets and local config
+.env
+.env.local
+.env.*.local
+
+# Local runtime data (never commit user documents)
+.nexus-storage/
+*.db
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+frontend/public/sw.js
+
+# Logs and OS noise
+*.log
+.DS_Store
+
+# Harness runtime
+.harness/
