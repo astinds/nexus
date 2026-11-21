@@ -12,12 +12,14 @@ Design rules:
 
 from __future__ import annotations
 
-import io
 import json
+import os
 import re
+import tempfile
 import zipfile
 from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable, Iterable
 
 from ..errors import bad_request
 from ..models import ExportFormat, Segment
@@ -275,36 +277,72 @@ def render(
 
 
 # ------------------------------------------------------------------- backup zip
-def build_library_zip(
-    items: list[dict],
-    segments_by_item: dict[str, list[dict]],
+BACKUP_README = (
+    "NEXUS library backup.\n\n"
+    "items/*.md    one file per item: YAML frontmatter + segments\n"
+    "library.json  machine-readable copy of every item row (no segment bodies)\n"
+    "library.md    human index\n\n"
+    "Frontmatter is Obsidian-compatible: drop the items/ folder into a vault.\n"
+)
+
+# Index files carry this projection only. Segment bodies are never buffered for
+# the index, so RAM stays flat no matter how large the library is.
+LIGHT_ROW_FIELDS = (
+    "id",
+    "title",
+    "source_format",
+    "triage_status",
+    "processing_status",
+    "word_count",
+    "est_read_minutes",
+    "created_at",
+)
+
+
+def _light_row(row: dict) -> dict:
+    return {field: _jsonable({field: row.get(field)})[field] for field in LIGHT_ROW_FIELDS}
+
+
+def write_library_zip(
+    destination: "os.PathLike[str] | str",
     *,
-    tags_by_item: dict[str, list[str]] | None = None,
-    collections_by_item: dict[str, list[str]] | None = None,
+    rows: Iterable[dict],
+    segments_for: Callable[[Any], list[dict]],
+    tags_for: Callable[[Any], list[str]],
+    collections_for: Callable[[Any], list[str]],
     manifest: dict[str, Any] | None = None,
-) -> bytes:
-    """One Markdown file per item plus a machine-readable manifest.
+) -> int:
+    """Write the backup ZIP to `destination` one item at a time.
 
-    The ZIP is the honest backup: it survives losing the database entirely, because
-    frontmatter carries every field and each segment keeps its label.
+    `rows` is iterated lazily by the caller (keyset-paginated), and each item's
+    segments are fetched, rendered and dropped before the next item is touched.
+    Peak memory is therefore one item's segments plus the lightweight index rows,
+    not the whole library.
+
+    Returns the number of items written.
     """
-    buffer = io.BytesIO()
-    tags_by_item = tags_by_item or {}
-    collections_by_item = collections_by_item or {}
+    index_lines = ["# NEXUS library export", ""]
+    light_rows: list[dict] = []
+    count = 0
 
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        index_lines = ["# NEXUS library export", ""]
-        for item in items:
-            key = str(item["id"])
+    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for row in rows:
+            key = str(row["id"])
+            segments = segments_for(row["id"])
             markdown = render_markdown(
-                item,
-                segments_by_item.get(key, []),
-                tags=tags_by_item.get(key, []),
-                collections=collections_by_item.get(key, []),
+                row,
+                segments,
+                tags=tags_for(row["id"]),
+                collections=collections_for(row["id"]),
             )
-            slug = _safe_slug(item.get("title"))
-            archive.writestr(f"items/{slug}-{key[:8]}.md", markdown)
-            index_lines.append(f"- {item.get('title')} ({key})")
+            # Drop the segment bodies before touching the next item.
+            del segments
+            archive.writestr(
+                f"items/{_safe_slug(row.get('title'))}-{key[:8]}.md", markdown
+            )
+            index_lines.append(f"- {row.get('title')} ({key})")
+            light_rows.append(_light_row(row))
+            count += 1
 
         archive.writestr("library.md", "\n".join(index_lines) + "\n")
         archive.writestr(
@@ -314,25 +352,49 @@ def build_library_zip(
                     "nexus_backup": {
                         "version": 1,
                         "exported_at": datetime.now(timezone.utc).isoformat(),
-                        "items": len(items),
+                        "items": count,
                     },
                     "manifest": manifest or {},
-                    "items": [_jsonable(item) for item in items],
+                    "items": light_rows,
                 },
                 indent=2,
                 ensure_ascii=False,
                 default=str,
             ),
         )
-        archive.writestr(
-            "README.txt",
-            "NEXUS library backup.\n\n"
-            "items/*.md  one file per item: YAML frontmatter + segments\n"
-            "library.json  machine-readable copy of every item row\n"
-            "library.md    human index\n\n"
-            "Frontmatter is Obsidian-compatible: drop the items/ folder into a vault.\n",
+        archive.writestr("README.txt", BACKUP_README)
+
+    return count
+
+
+def build_library_zip(
+    items: list[dict],
+    segments_by_item: dict[str, list[dict]] | None = None,
+    *,
+    tags_by_item: dict[str, list[str]] | None = None,
+    collections_by_item: dict[str, list[str]] | None = None,
+    manifest: dict[str, Any] | None = None,
+) -> bytes:
+    """In-memory convenience wrapper for tests and small libraries.
+
+    Production export uses `write_library_zip` plus a StreamingResponse so a large
+    library never has to fit in RAM.
+    """
+    segments = segments_by_item or {}
+    tags = tags_by_item or {}
+    collections_map = collections_by_item or {}
+
+    with tempfile.TemporaryDirectory() as workdir:
+        target = Path(workdir) / "library.zip"
+        write_library_zip(
+            target,
+            rows=items,
+            segments_for=lambda item_id: segments.get(str(item_id), []),
+            tags_for=lambda item_id: tags.get(str(item_id), []),
+            collections_for=lambda item_id: collections_map.get(str(item_id), []),
+            manifest=manifest,
         )
-    return buffer.getvalue()
+        return target.read_bytes()
 
 
 def segments_of(detail: dict) -> list[dict]:

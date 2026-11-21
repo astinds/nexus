@@ -58,11 +58,14 @@ def get_by_hash(cur: psycopg.Cursor, workspace_id: UUID, content_hash: str) -> d
 
 
 def update(cur: psycopg.Cursor, item_id: UUID, values: dict[str, Any]) -> dict | None:
-    clean = {
-        key: value
-        for key, value in values.items()
-        if key in UPDATABLE_COLUMNS and value is not None
-    }
+    """Apply a partial update.
+
+    Explicit `None` is written as SQL NULL: that is how a caller clears
+    `blueprint_id`, `summary` or a stale `error_message`. Fields the client did
+    not send are simply absent, because services pass `exclude_unset` payloads;
+    an empty mapping therefore means "nothing to change", not "clear everything".
+    """
+    clean = {key: value for key, value in values.items() if key in UPDATABLE_COLUMNS}
     if not clean:
         return get(cur, item_id)
     row = update_returning(
@@ -127,6 +130,42 @@ def list_paged(cur: psycopg.Cursor, filters: LibraryFilters) -> tuple[list[dict]
     )
     params = {**query.params, "limit": filters.limit, "offset": filters.offset}
     return fetch_all(cur, sql, params), total
+
+
+# Narrow projection for the backup ZIP: enough to render frontmatter and the
+# index, never the JSONB blobs or segment bodies.
+EXPORT_COLUMNS = """
+    i.id, i.blueprint_id, i.title, i.source_format, i.source_uri, i.snapshot_uri,
+    i.mime_type, i.file_size, i.word_count, i.est_read_minutes, i.content_hash,
+    i.processing_status, i.triage_status, i.reading_progress, i.summary,
+    i.custom_fields, i.metadata, i.created_at, i.updated_at
+"""
+
+
+def iter_export_rows(
+    cur: psycopg.Cursor, *, workspace_id: UUID | None = None, batch_size: int = 200
+):
+    """Yield item rows for the backup, keyset-paginated by id.
+
+    Keyset (not OFFSET) pagination keeps the scan stable and lets the caller
+    stream one batch at a time instead of materialising the whole library.
+    """
+    last_id: UUID | None = None
+    while True:
+        query = Query()
+        query.eq("i.workspace_id", workspace_id, cast="uuid")
+        if last_id is not None:
+            query.raw("i.id > %(last_id)s::uuid", last_id=str(last_id))
+        sql = (
+            f"select {EXPORT_COLUMNS} from items i{query.where()} "
+            "order by i.id asc limit %(limit)s"
+        )
+        batch = fetch_all(cur, sql, {**query.params, "limit": batch_size})
+        if not batch:
+            return
+        for row in batch:
+            yield row
+        last_id = batch[-1]["id"]
 
 
 def continue_reading(cur: psycopg.Cursor, limit: int = 5) -> list[dict]:

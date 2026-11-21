@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, Depends, Query, Response
+from fastapi.responses import StreamingResponse
 
 from ..auth import require_access
 from ..models import (
@@ -16,13 +19,13 @@ from ..models import (
     clamp_limit,
     clamp_offset,
 )
+from ..repositories import collections as collections_repo
+from ..repositories import items as items_repo
+from ..repositories import tags as tags_repo
+from ..repositories import activity
 from ..services import export as export_service
 from ..services import items as items_service
 from ..services import search as search_service
-from ..repositories import items as items_repo
-from ..repositories import tags as tags_repo
-from ..repositories import collections as collections_repo
-from ..repositories import activity
 from .deps import get_cursor
 
 router = APIRouter(tags=["search", "export"], dependencies=[Depends(require_access)])
@@ -88,51 +91,62 @@ def export_item(
     return Response(content=body, media_type=media_type, headers=headers)
 
 
-@router.get("/export/library", summary="Full library backup as a ZIP")
+def _iter_file(path: Path, chunk_size: int = 64 * 1024):
+    """Yield bytes from disk, closing the handle when the client disconnects."""
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+
+@router.get("/export/library", summary="Full library backup as a streamed ZIP")
 def export_library(
     workspace_id: UUID | None = Query(default=None),
     cur: psycopg.Cursor = Depends(get_cursor),
 ) -> Response:
-    from ..models import LibraryFilters
+    """Stream a whole-library backup without ever holding it in RAM.
 
-    filters = LibraryFilters(workspace_id=workspace_id, limit=200, offset=0)
-    rows, total = items_repo.list_paged(cur, filters)
+    One item at a time: fetch its lightweight row, its segments, its tags and
+    collections; write the ZIP member; drop all four before the next item. Only
+    the lightweight index rows (library.md / library.json) stay in memory.
+    """
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp.close()
+    zip_path = Path(tmp.name)
 
-    # Page through the library in bounded batches: a 5 000-item library must not
-    # need 5 000 segment bodies in RAM at once.
-    all_rows: list[dict] = list(rows)
-    while len(all_rows) < total:
-        batch_filters = LibraryFilters(
-            workspace_id=workspace_id, limit=200, offset=len(all_rows)
+    def _segments_for(item_id: UUID) -> list[dict]:
+        return items_repo.list_segments(cur, item_id)
+
+    def _tags_for(item_id: UUID) -> list[str]:
+        return [tag["name"] for tag in tags_repo.for_item(cur, item_id)]
+
+    def _collections_for(item_id: UUID) -> list[str]:
+        return [entry["name"] for entry in collections_repo.for_item(cur, item_id)]
+
+    try:
+        count = export_service.write_library_zip(
+            zip_path,
+            rows=items_repo.iter_export_rows(cur, workspace_id=workspace_id),
+            segments_for=_segments_for,
+            tags_for=_tags_for,
+            collections_for=_collections_for,
+            manifest={"workspace_id": str(workspace_id) if workspace_id else None},
         )
-        batch, _ = items_repo.list_paged(cur, batch_filters)
-        if not batch:
-            break
-        all_rows.extend(batch)
+        activity.log(cur, "library.exported", f"Library backup: {count} items")
+    except Exception:
+        zip_path.unlink(missing_ok=True)
+        raise
 
-    segments_by_item: dict[str, list[dict]] = {}
-    tags_by_item: dict[str, list[str]] = {}
-    collections_by_item: dict[str, list[str]] = {}
-    for row in all_rows:
-        key = str(row["id"])
-        segments_by_item[key] = items_repo.list_segments(cur, row["id"])
-        tags_by_item[key] = [tag["name"] for tag in tags_repo.for_item(cur, row["id"])]
-        collections_by_item[key] = [
-            entry["name"] for entry in collections_repo.for_item(cur, row["id"])
-        ]
+    def _stream():
+        try:
+            yield from _iter_file(zip_path)
+        finally:
+            zip_path.unlink(missing_ok=True)
 
-    payload = export_service.build_library_zip(
-        all_rows,
-        segments_by_item,
-        tags_by_item=tags_by_item,
-        collections_by_item=collections_by_item,
-        manifest={"workspace_id": str(workspace_id) if workspace_id else None, "items": len(all_rows)},
-    )
-    activity.log(cur, "library.exported", f"Library backup: {len(all_rows)} items")
-    return Response(
-        content=payload,
+    return StreamingResponse(
+        _stream(),
         media_type="application/zip",
-        headers={
-            "Content-Disposition": 'attachment; filename="nexus-library.zip"',
-        },
+        headers={"Content-Disposition": 'attachment; filename="nexus-library.zip"'},
     )

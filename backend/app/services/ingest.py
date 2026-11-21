@@ -21,6 +21,8 @@ from ..models import (
     IngestTextRequest,
     IngestUrlRequest,
     Item,
+    ItemCreate,
+    ProcessingStatus,
     SegmentIntegrity,
     SourceFormat,
 )
@@ -164,6 +166,88 @@ class IngestService:
             )
 
     # ------------------------------------------------------------------- public
+    def ingest_item(self, cur: psycopg.Cursor, payload: ItemCreate) -> IngestResult:
+        """Programmatic creation path (POST /api/v1/items).
+
+        `ItemCreate` is zero-mandatory-field: a client may POST `{}` and get a
+        usable placeholder item back. When `content` is present it is extracted
+        exactly like a pasted capture, so note bodies get searchable segments.
+        """
+        workspace = self._resolve_workspace(cur, payload.workspace_id)
+        source_format = payload.source_format
+
+        if source_format in FILE_ONLY_FORMATS:
+            raise bad_request(
+                f"{source_format.value} items need the /api/v1/ingest file upload",
+                code="wrong_ingest_channel",
+            )
+
+        body = payload.content or ""
+        content_hash = sha256_text(body) if body.strip() else None
+        if content_hash is not None:
+            duplicate = self._find_duplicate(cur, workspace["id"], content_hash)
+            if duplicate is not None:
+                return self._duplicate_result(cur, duplicate)
+
+        if body.strip():
+            extraction = self._run_extractor(
+                source_format=source_format,
+                text=body,
+                data=None,
+                filename=payload.title,
+                mime_type="text/markdown" if source_format == SourceFormat.note else None,
+            )
+            title = (payload.title or extraction.title or "Untitled").strip()
+            row, created = self._persist(
+                cur,
+                workspace=workspace,
+                extraction=extraction,
+                source_format=source_format,
+                title=title or "Untitled",
+                source_uri=payload.source_uri,
+                snapshot_uri=None,
+                mime_type="text/markdown" if source_format == SourceFormat.note else "text/plain",
+                file_size=len(body.encode("utf-8")),
+                content_hash=content_hash,
+                blueprint_id=payload.blueprint_id,
+                triage_status=payload.triage_status.value,
+                tag_names=payload.tags,
+                collection_ids=payload.collection_ids,
+                custom_fields=payload.custom_fields,
+                metadata={"ingest": "api", "content_hash": content_hash},
+            )
+            return self._result(row, extraction, created, duplicate=False)
+
+        # No body yet: capture-first still wins, so store the item and let the
+        # user enrich it later (PUT /items/{id}/content re-indexes on save).
+        extraction = ExtractionResult(
+            segments=[],
+            engine="none",
+            title=payload.title,
+            status=ProcessingStatus.pending,
+            warnings=[],
+            metadata={"empty_item": True},
+        )
+        row, created = self._persist(
+            cur,
+            workspace=workspace,
+            extraction=extraction,
+            source_format=source_format,
+            title=(payload.title or "Untitled").strip(),
+            source_uri=payload.source_uri,
+            snapshot_uri=None,
+            mime_type=None,
+            file_size=None,
+            content_hash=None,
+            blueprint_id=payload.blueprint_id,
+            triage_status=payload.triage_status.value,
+            tag_names=payload.tags,
+            collection_ids=payload.collection_ids,
+            custom_fields=payload.custom_fields,
+            metadata={"ingest": "api", "empty_item": True},
+        )
+        return self._result(row, extraction, created, duplicate=False)
+
     def ingest_text(self, cur: psycopg.Cursor, payload: IngestTextRequest) -> IngestResult:
         workspace = self._resolve_workspace(cur, payload.workspace_id)
         source_format = payload.source_format

@@ -8,11 +8,23 @@ codebase (column names, whitelisted sort orders) are interpolated.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable, Mapping, Sequence
 
 import psycopg
 
 Params = Mapping[str, Any]
+
+# Column identifiers reach SQL by string interpolation, so they are validated
+# here. Values never do: those are always bound as parameters below.
+COLUMN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
+
+
+def validate_column(column: str) -> str:
+    """Accept `name` or `table.name`; refuse anything that could carry SQL."""
+    if not isinstance(column, str) or not COLUMN_RE.match(column):
+        raise ValueError(f"unsafe SQL column identifier: {column!r}")
+    return column
 
 
 class Query:
@@ -33,30 +45,38 @@ class Query:
     def eq(self, column: str, value: Any, *, cast: str | None = None) -> "Query":
         if value is None:
             return self
+        validate_column(column)
         self.clauses.append(f"{column} = {self._bind(value)}{f'::{cast}' if cast else ''}")
         return self
 
     def neq(self, column: str, value: Any) -> "Query":
         if value is None:
             return self
+        validate_column(column)
         self.clauses.append(f"{column} <> {self._bind(value)}")
         return self
 
     def any_of(self, column: str, values: Sequence[Any] | None) -> "Query":
         if not values:
             return self
+        validate_column(column)
         self.clauses.append(f"{column} = any({self._bind(list(values))})")
         return self
 
     def ilike(self, column: str, value: str | None, *, contains: bool = True) -> "Query":
         if not value:
             return self
+        validate_column(column)
         pattern = f"%{value}%" if contains else f"{value}%"
         self.clauses.append(f"{column} ilike {self._bind(pattern)}")
         return self
 
     def raw(self, clause: str, **params: Any) -> "Query":
-        """Add a hand-written clause with its own named parameters."""
+        """Add a hand-written clause with its own named parameters.
+
+        Deliberate escape hatch for SQL that needs subqueries. Column identifiers
+        inside `clause` are the caller's responsibility: never pass user input here.
+        """
         for key, value in params.items():
             if key in self.params:
                 raise ValueError(f"duplicate query parameter {key}")

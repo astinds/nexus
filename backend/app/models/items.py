@@ -75,12 +75,23 @@ class ItemCreate(NexusModel):
 
 
 class ItemUpdate(NexusModel):
+    """Partial update. Omitted fields are untouched; explicit null clears nullable ones."""
+
     title: str | None = Field(default=None, min_length=1, max_length=500)
     blueprint_id: UUID | None = None
     triage_status: TriageStatus | None = None
     summary: str | None = Field(default=None, max_length=6000)
     custom_fields: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_null_for_required(cls, data: Any) -> Any:
+        # `title` is NOT NULL in PostgreSQL: a null must fail as 422 here rather
+        # than reaching the database or being silently ignored.
+        if isinstance(data, dict) and "title" in data and data["title"] is None:
+            raise ValueError("title cannot be null; omit it to keep the current title")
+        return data
 
 
 class TriageUpdate(NexusModel):

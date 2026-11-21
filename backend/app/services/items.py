@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -108,8 +109,12 @@ def set_triage(cur: psycopg.Cursor, item_id: UUID, payload: TriageUpdate) -> Ite
     return Item(**updated)
 
 
-def set_progress(cur: psycopg.Cursor, item_id: UUID, payload: ProgressUpdate) -> Item:
-    row = require_item(cur, item_id)
+def merge_progress(row: dict, payload: ProgressUpdate) -> dict:
+    """Overlay a progress update onto stored progress.
+
+    Pure so it can be tested without a database: every value is written when
+    supplied, `updated_at` is a real ISO-8601 instant (not the literal "now").
+    """
     progress = dict(row.get("reading_progress") or {})
     if payload.segment_index is not None:
         progress["segment_index"] = payload.segment_index
@@ -119,7 +124,13 @@ def set_progress(cur: psycopg.Cursor, item_id: UUID, payload: ProgressUpdate) ->
         progress["percent"] = round(float(payload.percent), 2)
     if payload.location is not None:
         progress["location"] = payload.location
-    progress["updated_at"] = "now"
+    progress["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return progress
+
+
+def set_progress(cur: psycopg.Cursor, item_id: UUID, payload: ProgressUpdate) -> Item:
+    row = require_item(cur, item_id)
+    progress = merge_progress(row, payload)
     values: dict[str, Any] = {"reading_progress": progress}
     # Opening an item to read it is a triage signal, but never override a
     # deliberate put-down: reader -> reading only.

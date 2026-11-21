@@ -116,10 +116,19 @@ class CollectionCreate(NexusModel):
 
 
 class CollectionUpdate(NexusModel):
+    """Partial update. `name` is NOT NULL; `parent_id = null` detaches the collection."""
+
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=2000)
     para_type: ParaType | None = None
     parent_id: UUID | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_null_name(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "name" in data and data["name"] is None:
+            raise ValueError("name cannot be null; omit it to keep the current name")
+        return data
 
 
 class Collection(NexusModel):
@@ -151,8 +160,17 @@ class TagCreate(NexusModel):
 
 
 class TagUpdate(NexusModel):
+    """Partial update. `name` is NOT NULL, so a null is rejected as 422."""
+
     name: str | None = Field(default=None, min_length=1, max_length=80)
     aliases: list[str] | None = Field(default=None, max_length=40)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_null_name(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "name" in data and data["name"] is None:
+            raise ValueError("name cannot be null; omit it to keep the current name")
+        return data
 
 
 class Tag(NexusModel):

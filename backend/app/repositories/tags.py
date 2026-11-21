@@ -51,11 +51,17 @@ def create(cur: psycopg.Cursor, payload: TagCreate) -> dict:
 
 
 def update(cur: psycopg.Cursor, tag_id: UUID, payload: TagUpdate) -> dict | None:
+    """Rename a tag or replace its aliases.
+
+    Keyed off `model_fields_set`, so an omitted field is untouched while
+    `{"aliases": null}` clears the aliases (the API model rejects a null `name`).
+    """
     values: dict = {}
-    if payload.name is not None:
+    provided = payload.model_fields_set
+    if "name" in provided and payload.name is not None:
         values["name"] = payload.name.strip()
-    if payload.aliases is not None:
-        values["aliases"] = unique_in_order(payload.aliases)
+    if "aliases" in provided:
+        values["aliases"] = unique_in_order(payload.aliases or [])
     if not values:
         return get(cur, tag_id)
     update_returning(cur, "tags", ident={"id": tag_id}, values=values)

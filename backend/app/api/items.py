@@ -9,7 +9,9 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from ..auth import require_access
 from ..models import (
+    IngestResult,
     Item,
+    ItemCreate,
     ItemDetail,
     ItemLinkCreate,
     ItemLinkView,
@@ -26,9 +28,25 @@ from ..models import (
     clamp_offset,
 )
 from ..services import items as items_service
-from .deps import get_cursor, get_storage_dep
+from ..services.ingest import IngestService
+from .deps import get_cursor, get_ingest_service, get_storage_dep
 
 router = APIRouter(tags=["items"], dependencies=[Depends(require_access)])
+
+
+@router.post(
+    "/items",
+    response_model=IngestResult,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create an item via JSON (zero-mandatory-field notes, programmatic)",
+)
+def create_item(
+    payload: ItemCreate,
+    cur: psycopg.Cursor = Depends(get_cursor),
+    service: IngestService = Depends(get_ingest_service),
+) -> IngestResult:
+    """Programmatic capture endpoint. Delegates to IngestService.ingest_item."""
+    return service.ingest_item(cur, payload)
 
 
 @router.get(
