@@ -14,10 +14,8 @@ from __future__ import annotations
 
 import argparse
 import os
-import struct
 import sys
 import uuid
-import zlib
 from dataclasses import dataclass
 from io import BytesIO
 
