@@ -41,7 +41,7 @@ frontend job, so `scripts/next.mjs` skips the WASM preload and Next uses
 
 ### Schema (`supabase/migrations/`)
 
-- `001_initial_schema.sql` — 14 tables: `schema_migrations`, `workspaces`,
+- `001_initial_schema.sql` — 15 tables: `schema_migrations`, `workspaces`,
   `metadata_blueprints`, `collections`, `tags`, `item_collections`, `item_tags`,
   `items`, `item_segments`, `relation_types`, `item_links`, `saved_views`,
   `prompt_templates`, `user_preferences`, `activity_logs`. Seeded: default workspace
