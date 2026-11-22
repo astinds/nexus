@@ -1,61 +1,77 @@
 'use client';
 
 /**
- * Cold-start wake + health state.
- * If /api/v1/health or /api/v1/auth/session is waking/unreachable/degraded,
- * surface a calm "Waking up NEXUS engine…" banner with retry.
+ * Cold-start wake + session state.
+ *
+ * Render Free sleeps after inactivity, so the very first request of a session
+ * can take ~30s or fail outright. Every screen reads this hook instead of
+ * guessing: `status` drives the "Waking up NEXUS engine…" banner, `session`
+ * drives the passcode gate, and `health` feeds the Settings system panel.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { getHealth, getSession } from './api';
+import type { HealthResponse, SessionResponse } from './types';
 
-export type HealthStatus = 'loading' | 'ok' | 'degraded' | 'unreachable';
+export type WakeStatus = 'loading' | 'ok' | 'degraded' | 'unreachable';
 
-export interface HealthState {
-  status: HealthStatus;
+export interface WakeState {
+  status: WakeStatus;
+  session: SessionResponse | null;
+  health: HealthResponse | null;
+  error: string | null;
   checkedAt: number | null;
-  authMode: 'dev_open' | 'key' | 'locked' | null;
-  devOpenAccess: boolean;
 }
 
-export function useHealth() {
-  const [state, setState] = useState<HealthState>({
-    status: 'loading',
-    checkedAt: null,
-    authMode: null,
-    devOpenAccess: false,
-  });
-  const [bannerDismissed, setBannerDismissed] = useState(false);
-  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+const INITIAL: WakeState = {
+  status: 'loading',
+  session: null,
+  health: null,
+  error: null,
+  checkedAt: null,
+};
+
+export function useWake() {
+  const [state, setState] = useState<WakeState>(INITIAL);
+  const [dismissed, setDismissed] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const check = useCallback(async () => {
+    setBusy(true);
     try {
       const health = await getHealth();
       const session = await getSession();
-      const ok = health.status === 'ok';
       setState({
-        status: ok ? 'ok' : 'degraded',
+        status: health.status === 'ok' ? 'ok' : 'degraded',
+        session,
+        health,
+        error: null,
         checkedAt: Date.now(),
-        authMode: session.mode === 'dev_open' ? 'dev_open' : session.mode,
-        devOpenAccess: !!health.auth?.dev_open_access,
       });
-    } catch {
-      setState({ status: 'unreachable', checkedAt: Date.now(), authMode: null, devOpenAccess: false });
+      setDismissed(false);
+    } catch (error) {
+      setState({
+        status: 'unreachable',
+        session: null,
+        health: null,
+        error: error instanceof Error ? error.message : 'Backend unreachable',
+        checkedAt: Date.now(),
+      });
+    } finally {
+      setBusy(false);
     }
   }, []);
 
   useEffect(() => {
     void check();
-    return () => {
-      if (retryTimer.current) clearTimeout(retryTimer.current);
-    };
   }, [check]);
 
-  const retry = useCallback(() => {
-    void check();
-  }, [check]);
-
-  const showBanner = state.status !== 'ok' && !bannerDismissed;
-
-  return { ...state, showBanner, retry, dismissBanner: () => setBannerDismissed(true), check };
+  return {
+    ...state,
+    busy,
+    retry: check,
+    dismiss: () => setDismissed(true),
+    showBanner: !dismissed && (state.status === 'unreachable' || state.status === 'degraded'),
+    devOpen: Boolean(state.health?.auth?.dev_open_access),
+  };
 }

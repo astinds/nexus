@@ -1,27 +1,63 @@
-/* Tailwind imports - will be configured by tailwindcss */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-/* Global CSS custom properties */
+/*
+ * NEXUS theme tokens.
+ * Every value below is overwritten at runtime by ThemeProvider from
+ * GET /api/v1/preferences, so components only ever read var(--token).
+ */
 :root {
-  --bg: #0a0a0f;
-  --surface: #12121a;
-  --accent: #00d4aa;
-  --font-reading: #e8e6e3;
-  --reading-width: 640px;
-  --font-scale: 1.0;
+  --bg: #0b0c10;
+  --surface: #14161c;
+  --surface-2: #1b1e26;
+  --border: #272b35;
+  --accent: #7c9cf5;
+  --accent-fg: #0b0c10;
+  --font-reading: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  --reading-width: 68ch;
+  --font-scale: 1;
+  --density: comfortable;
+  color-scheme: dark;
 }
 
-/* Focus-visible accessibility */
+html,
+body {
+  background: var(--bg);
+  color: rgb(232 230 227);
+}
+
+body {
+  font-family: var(--font-reading);
+  font-size: calc(1rem * var(--font-scale));
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Reader column: honours the reading-width preference. */
+.prose-reading {
+  max-width: var(--reading-width);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Minimal, dark scrollbars; no decoration beyond legibility. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-/* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

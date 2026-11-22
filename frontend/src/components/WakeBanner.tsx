@@ -1,35 +1,39 @@
 'use client';
 
 /**
- * Calm, minimalist cold-start banner. "Waking up NEXUS engine…"
- * with retry. Shown when health/auth is waking/unreachable/degraded.
+ * Calm cold-start banner. Shown only while the backend is waking or degraded,
+ * with an explicit retry — never an error wall on first paint.
  */
 
-import { useHealth } from '@/lib/useHealth';
+import { useWake } from '@/lib/useHealth';
 
 export default function WakeBanner() {
-  const { showBanner, retry, status, dismissBanner } = useHealth();
+  const { showBanner, status, busy, retry, dismiss, error } = useWake();
 
   if (!showBanner) return null;
 
   const message =
-    status === 'unreachable'
-      ? 'NEXUS engine unreachable.'
+    status === 'degraded'
+      ? 'NEXUS is running with a degraded dependency.'
       : 'Waking up NEXUS engine…';
 
   return (
     <div
       role="status"
-      className="sticky top-0 z-50 border-b border-white/10 bg-[var(--bg)] px-4 py-2 text-center text-xs text-[var(--font-reading)]"
+      aria-live="polite"
+      className="sticky top-0 z-50 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-xs"
     >
       <span className="opacity-80">{message}</span>
+      {error ? <span className="opacity-40">{error}</span> : null}
       <button
+        type="button"
         onClick={retry}
-        className="ml-3 underline underline-offset-2 opacity-70 hover:opacity-100"
+        disabled={busy}
+        className="underline underline-offset-2 opacity-70 hover:opacity-100 disabled:opacity-40"
       >
-        Retry
+        {busy ? 'Retrying…' : 'Retry'}
       </button>
-      <button onClick={dismissBanner} className="ml-2 opacity-50 hover:opacity-90">
+      <button type="button" onClick={dismiss} className="opacity-50 hover:opacity-90">
         Dismiss
       </button>
     </div>

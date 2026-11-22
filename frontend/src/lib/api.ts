@@ -1,35 +1,41 @@
 /**
- * Typed API client for the NEXUS FastAPI backend.
- * All requests flow through the Next.js rewrites proxy at /api/:path*
- * which forwards to the backend at API_BACKEND_URL.
+ * Typed client for the NEXUS FastAPI backend.
+ *
+ * Every call goes to `/api/v1/...` on the current origin; next.config.mjs
+ * rewrites that prefix to API_BACKEND_URL server-side, so the browser never
+ * makes a cross-origin request and cookies stay same-origin (ADR-010).
  */
 
-import {
+import type {
   ActivityLog,
   Blueprint,
   BlueprintCreate,
   BlueprintUpdate,
   Collection,
   CollectionCreate,
+  CollectionNode,
   CollectionUpdate,
   DashboardStats,
+  ExportFormat,
   HealthResponse,
-  IngestFormatsResponse,
+  IngestFormats,
   IngestResult,
-  IngestTextRequest,
-  IngestUrlRequest,
   Item,
   ItemCreate,
   ItemDetail,
   ItemLinkCreate,
+  ItemLinkView,
   ItemUpdate,
-  LibraryFilters,
+  NoteContentUpdate,
+  Page,
+  PreferencePayload,
   Preferences,
-  PreferencesUpdate,
   ProgressUpdate,
   PromptTemplate,
   PromptTemplateCreate,
   PromptTemplateUpdate,
+  RelationType,
+  RelationTypeCreate,
   SavedView,
   SavedViewCreate,
   SavedViewUpdate,
@@ -37,300 +43,338 @@ import {
   SessionResponse,
   SourceFormat,
   Tag,
+  TagMergeRequest,
+  TagMergeResult,
   TriageStatus,
-  TimeBudget,
+  Workspace,
+  WorkspaceCreate,
+  WorkspaceUpdate,
 } from './types';
 
-const API_BASE = '/api/v1';
+const BASE = '/api/v1';
 
-// -----------------------------------------------------------------------------
-// Low-level fetch wrapper
-// -----------------------------------------------------------------------------
+/** Error carrying the backend's `error.code` so callers can branch on it. */
+export class ApiError extends Error {
+  status: number;
+  code: string;
+  detail: unknown;
 
-async function request<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+  constructor(status: number, code: string, message: string, detail: unknown = null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.body && !(init.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { credentials: 'include', ...init, headers });
+  } catch {
+    throw new ApiError(0, 'network_error', 'The NEXUS backend is unreachable.');
+  }
 
   if (!res.ok) {
+    let code = `http_${res.status}`;
+    let message = `Request failed (${res.status}).`;
     let detail: unknown = null;
     try {
       const body = await res.json();
-      if (body?.error?.code) {
-        detail = body.error.detail ?? body.error.message;
+      if (body?.error) {
+        code = body.error.code ?? code;
+        message = body.error.message ?? message;
+        detail = body.error.detail ?? null;
       }
     } catch {
-      // ignore body parse errors
+      /* non-JSON error body */
     }
-    throw new Error(`API error ${res.status}: ${JSON.stringify(detail)}`);
+    throw new ApiError(res.status, code, message, detail);
   }
 
-  if (res.status === 204) {
-    return undefined as T;
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+function qs(params: Record<string, string | number | boolean | null | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined || value === '') continue;
+    search.set(key, String(value));
   }
-
-  return res.json() as Promise<T>;
+  const text = search.toString();
+  return text ? `?${text}` : '';
 }
 
-// -----------------------------------------------------------------------------
-// Health & auth
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------------------- system
+export const getHealth = () => request<HealthResponse>('/health');
+export const getSession = () => request<SessionResponse>('/auth/session');
 
-export async function getHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>('/health');
+export const unlockSession = (key: string) =>
+  request<SessionResponse>('/auth/session', {
+    method: 'POST',
+    headers: { 'X-Nexus-Key': key },
+  });
+
+export const lockSession = () =>
+  request<SessionResponse>('/auth/session', { method: 'DELETE' });
+
+// ---------------------------------------------------------------- dashboard
+export const getDashboard = (workspaceId?: string | null) =>
+  request<DashboardStats>(`/dashboard${qs({ workspace_id: workspaceId })}`);
+
+export const getActivity = (limit = 20) =>
+  request<ActivityLog[]>(`/activity${qs({ limit })}`);
+
+// -------------------------------------------------------------------- items
+export interface ItemQuery {
+  workspace_id?: string | null;
+  source_format?: SourceFormat | null;
+  blueprint_id?: string | null;
+  triage_status?: TriageStatus | null;
+  collection_id?: string | null;
+  tag?: string | null;
+  time_budget?: string | null;
+  q?: string | null;
+  sort?: string;
+  limit?: number;
+  offset?: number;
 }
 
-export async function getSession(): Promise<SessionResponse> {
-  return request<SessionResponse>('/auth/session');
-}
+export const getItems = (query: ItemQuery = {}) =>
+  request<Page<Item>>(`/items${qs({ ...query })}`);
 
-export async function unlockSession(): Promise<SessionResponse> {
-  return request<SessionResponse>('/auth/session', { method: 'POST' });
-}
+export const getItem = (itemId: string, includeSegments = true) =>
+  request<ItemDetail>(`/items/${itemId}${qs({ include_segments: includeSegments })}`);
 
-export async function lockSession(): Promise<SessionResponse> {
-  return request<SessionResponse>('/auth/session', { method: 'DELETE' });
-}
+export const createItem = (payload: ItemCreate) =>
+  request<IngestResult>('/items', { method: 'POST', body: JSON.stringify(payload) });
 
-// -----------------------------------------------------------------------------
-// Dashboard
-// -----------------------------------------------------------------------------
+export const updateItem = (itemId: string, payload: ItemUpdate) =>
+  request<Item>(`/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(payload) });
 
-export async function getDashboard(
-  workspaceId?: string | null
-): Promise<DashboardStats> {
-  const params = new URLSearchParams();
-  if (workspaceId) params.set('workspace_id', workspaceId);
-  const qs = params.toString();
-  return request<DashboardStats>(`/dashboard${qs ? `?${qs}` : ''}`);
-}
-
-// -----------------------------------------------------------------------------
-// Library / items
-// -----------------------------------------------------------------------------
-
-export async function getItems(
-  filters: LibraryFilters
-): Promise<import('./types').Page<Item>> {
-  const params = new URLSearchParams();
-  if (filters.workspace_id) params.set('workspace_id', filters.workspace_id);
-  if (filters.source_format) params.set('source_format', filters.source_format);
-  if (filters.blueprint_id) params.set('blueprint_id', filters.blueprint_id);
-  if (filters.triage_status) params.set('triage_status', filters.triage_status);
-  if (filters.collection_id) params.set('collection_id', filters.collection_id);
-  if (filters.tag) params.set('tag', filters.tag);
-  if (filters.time_budget) params.set('time_budget', filters.time_budget);
-  if (filters.q) params.set('q', filters.q);
-  if (filters.sort) params.set('sort', filters.sort);
-  params.set('limit', String(filters.limit || 50));
-  params.set('offset', String(filters.offset || 0));
-
-  const qs = params.toString();
-  return request<import('./types').Page<Item>>(`/items${qs ? `?${qs}` : ''}`);
-}
-
-export async function getItem(itemId: string): Promise<ItemDetail> {
-  return request<ItemDetail>(`/items/${itemId}`);
-}
-
-export async function createItem(
-  payload: Omit<ItemCreate, 'id'> & { id?: string }
-): Promise<IngestResult> {
-  return request<IngestResult>('/items', { method: 'POST', body: JSON.stringify(payload) });
-}
-
-export async function updateItem(
-  itemId: string,
-  payload: ItemUpdate
-): Promise<Item> {
-  return request<Item>(`/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(payload) });
-}
-
-export async function setTriage(
-  itemId: string,
-  triageStatus: TriageStatus
-): Promise<Item> {
-  return request<Item>(`/items/${itemId}/triage`, {
+export const setTriage = (itemId: string, triageStatus: TriageStatus) =>
+  request<Item>(`/items/${itemId}/triage`, {
     method: 'POST',
     body: JSON.stringify({ triage_status: triageStatus }),
   });
-}
 
-export async function deleteItem(itemId: string): Promise<void> {
-  return request<void>(`/items/${itemId}`, { method: 'DELETE' });
-}
-
-export async function updateProgress(
-  itemId: string,
-  segmentIndex: number
-): Promise<Item> {
-  const payload: ProgressUpdate = { item_id: itemId, segment_index: segmentIndex };
-  return request<Item>(`/items/${itemId}/progress`, {
+export const setProgress = (itemId: string, payload: ProgressUpdate) =>
+  request<Item>(`/items/${itemId}/progress`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
-}
 
-export async function getSegment(
-  itemId: string,
-  segmentIndex: number
-): Promise<import('./types').Segment> {
-  return request<import('./types').Segment>(
-    `/items/${itemId}/segments/${segmentIndex}`
-  );
-}
+export const replaceNoteContent = (itemId: string, content: string) =>
+  request<ItemDetail>(`/items/${itemId}/content`, {
+    method: 'PUT',
+    body: JSON.stringify({ content } satisfies NoteContentUpdate),
+  });
 
-// Download file endpoint returns a streamed Response - handle separately.
+export const deleteItem = (itemId: string) =>
+  request<{ deleted: boolean }>(`/items/${itemId}`, { method: 'DELETE' });
 
-// -----------------------------------------------------------------------------
-// Ingest
-// -----------------------------------------------------------------------------
-
-export async function getIngestFormats(): Promise<IngestFormatsResponse> {
-  return request<IngestFormatsResponse>('/ingest/formats');
-}
-
-export async function ingestText(
-  payload: IngestTextRequest
-): Promise<IngestResult> {
-  return request<IngestResult>('/ingest', {
+// -------------------------------------------------------------------- links
+export const createLink = (itemId: string, payload: ItemLinkCreate) =>
+  request<ItemLinkView>(`/items/${itemId}/links`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+
+export const deleteLink = (itemId: string, linkId: string) =>
+  request<{ deleted: boolean }>(`/items/${itemId}/links/${linkId}`, { method: 'DELETE' });
+
+// ------------------------------------------------------------------- ingest
+export const getIngestFormats = () => request<IngestFormats>('/ingest/formats');
+
+export const ingestFile = (file: File, sourceFormat: SourceFormat, title?: string) => {
+  const body = new FormData();
+  body.append('file', file);
+  body.append('source_format', sourceFormat);
+  if (title) body.append('title', title);
+  return request<IngestResult>('/ingest', { method: 'POST', body });
+};
+
+export interface IngestTextPayload {
+  text: string;
+  source_format?: SourceFormat;
+  title?: string | null;
+  triage_status?: TriageStatus;
+  collection_ids?: string[];
+  tags?: string[];
+  paste_fallback?: boolean;
 }
 
-export async function ingestUrl(
-  payload: IngestUrlRequest
-): Promise<IngestResult> {
-  return request<IngestResult>('/ingest/url', {
+/** Pasted text, Markdown and notes all arrive here (multipart form fields). */
+export const ingestText = (payload: IngestTextPayload) => {
+  const body = new FormData();
+  body.append('text', payload.text);
+  body.append('source_format', payload.source_format ?? 'note');
+  if (payload.title) body.append('title', payload.title);
+  if (payload.triage_status) body.append('triage_status', payload.triage_status);
+  // The backend takes comma-separated strings, not repeated fields.
+  if (payload.tags?.length) body.append('tags', payload.tags.join(','));
+  if (payload.collection_ids?.length) {
+    body.append('collection_ids', payload.collection_ids.join(','));
+  }
+  if (payload.paste_fallback) body.append('paste_fallback', 'true');
+  return request<IngestResult>('/ingest', { method: 'POST', body });
+};
+
+export const ingestUrl = (payload: {
+  url: string;
+  title?: string | null;
+  triage_status?: TriageStatus;
+  tags?: string[];
+  collection_ids?: string[];
+}) =>
+  request<IngestResult>('/ingest/url', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+
+// ------------------------------------------------------------------- search
+export interface SearchQuery {
+  q: string;
+  source_format?: SourceFormat | null;
+  blueprint_id?: string | null;
+  triage_status?: TriageStatus | null;
+  collection_id?: string | null;
+  tag?: string | null;
+  limit?: number;
+  offset?: number;
 }
 
-// -----------------------------------------------------------------------------
-// Search
-// -----------------------------------------------------------------------------
+export const search = (query: SearchQuery) =>
+  request<SearchResponse>(`/search${qs({ ...query })}`);
 
-export async function search(
-  query: string,
-  filters: {
-    source_format?: SourceFormat;
-    blueprint_id?: string | null;
-    triage_status?: TriageStatus;
-    collection_id?: string | null;
-    tag?: string;
-    limit?: number;
-    offset?: number;
-  } = {}
-): Promise<SearchResponse> {
-  const params = new URLSearchParams({ q: query, limit: String(filters.limit || 50) });
-  if (filters.source_format) params.set('source_format', filters.source_format);
-  if (filters.blueprint_id) params.set('blueprint_id', filters.blueprint_id);
-  if (filters.triage_status) params.set('triage_status', filters.triage_status);
-  if (filters.collection_id) params.set('collection_id', filters.collection_id);
-  if (filters.tag) params.set('tag', filters.tag);
-  if (filters.offset) params.set('offset', String(filters.offset));
+// ------------------------------------------------------------------ export
+export const exportItemUrl = (itemId: string, format: ExportFormat, download = true) =>
+  `${BASE}/items/${itemId}/export/${format}${qs({ download })}`;
 
-  const qs = params.toString();
-  return request<SearchResponse>(`/search${qs ? `?${qs}` : ''}`);
-}
+export const exportLibraryUrl = (workspaceId?: string | null) =>
+  `${BASE}/export/library${qs({ workspace_id: workspaceId })}`;
 
-// -----------------------------------------------------------------------------
-// Saved views / smart lenses
-// -----------------------------------------------------------------------------
+export const itemDownloadUrl = (itemId: string) => `${BASE}/items/${itemId}/download`;
 
-export async function getSavedViews(pinnedOnly?: boolean): Promise<SavedView[]> {
-  const qs = pinnedOnly ? '?pinned_only=true' : '';
-  return request<SavedView[]>(`/saved-views${qs}`);
-}
+// ----------------------------------------------------------------- catalog
+export const getWorkspaces = () => request<Workspace[]>('/workspaces');
 
-export async function createSavedView(
-  payload: SavedViewCreate
-): Promise<SavedView> {
-  return request<SavedView>('/saved-views', {
+export const createWorkspace = (payload: WorkspaceCreate) =>
+  request<Workspace>('/workspaces', { method: 'POST', body: JSON.stringify(payload) });
+
+export const updateWorkspace = (id: string, payload: WorkspaceUpdate) =>
+  request<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+
+export const deleteWorkspace = (id: string) =>
+  request<{ deleted: boolean }>(`/workspaces/${id}`, { method: 'DELETE' });
+
+export const getBlueprints = () => request<Blueprint[]>('/blueprints');
+
+export const createBlueprint = (payload: BlueprintCreate) =>
+  request<Blueprint>('/blueprints', { method: 'POST', body: JSON.stringify(payload) });
+
+export const updateBlueprint = (id: string, payload: BlueprintUpdate) =>
+  request<Blueprint>(`/blueprints/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+
+export const deleteBlueprint = (id: string) =>
+  request<{ deleted: boolean }>(`/blueprints/${id}`, { method: 'DELETE' });
+
+export const getCollections = (workspaceId?: string | null) =>
+  request<Collection[]>(`/collections${qs({ workspace_id: workspaceId })}`);
+
+export const getCollectionTree = (workspaceId?: string | null) =>
+  request<CollectionNode[]>(`/collections/tree${qs({ workspace_id: workspaceId })}`);
+
+export const createCollection = (payload: CollectionCreate) =>
+  request<Collection>('/collections', { method: 'POST', body: JSON.stringify(payload) });
+
+export const updateCollection = (id: string, payload: CollectionUpdate) =>
+  request<Collection>(`/collections/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+
+export const deleteCollection = (id: string) =>
+  request<{ deleted: boolean }>(`/collections/${id}`, { method: 'DELETE' });
+
+export const getTags = () => request<Tag[]>('/tags');
+
+export const createTag = (name: string) =>
+  request<Tag>('/tags', { method: 'POST', body: JSON.stringify({ name }) });
+
+export const updateTag = (
+  id: string,
+  payload: { name?: string; aliases?: string[] }
+) => request<Tag>(`/tags/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+
+export const deleteTag = (id: string) =>
+  request<{ deleted: boolean }>(`/tags/${id}`, { method: 'DELETE' });
+
+export const mergeTags = (payload: TagMergeRequest) =>
+  request<TagMergeResult>('/tags/merge', { method: 'POST', body: JSON.stringify(payload) });
+
+export const getRelationTypes = () => request<RelationType[]>('/relation-types');
+
+export const createRelationType = (payload: RelationTypeCreate) =>
+  request<RelationType>('/relation-types', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
-}
 
-export async function updateSavedView(
-  viewId: string,
-  payload: SavedViewUpdate
-): Promise<SavedView> {
-  return request<SavedView>(`/saved-views/${viewId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
-}
+export const deleteRelationType = (id: string) =>
+  request<{ deleted: boolean }>(`/relation-types/${id}`, { method: 'DELETE' });
 
-export async function pinSavedView(
-  viewId: string,
-  pinned: boolean
-): Promise<SavedView> {
-  return request<SavedView>(`/saved-views/${viewId}/pin`, {
+// ------------------------------------------------------------------ studio
+export const getSavedViews = (pinnedOnly = false) =>
+  request<SavedView[]>(`/saved-views${qs({ pinned_only: pinnedOnly })}`);
+
+export const createSavedView = (payload: SavedViewCreate) =>
+  request<SavedView>('/saved-views', { method: 'POST', body: JSON.stringify(payload) });
+
+export const updateSavedView = (id: string, payload: SavedViewUpdate) =>
+  request<SavedView>(`/saved-views/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+
+export const pinSavedView = (id: string, pinned: boolean) =>
+  request<SavedView>(`/saved-views/${id}/pin`, {
     method: 'POST',
     body: JSON.stringify({ is_pinned: pinned }),
   });
-}
 
-// -----------------------------------------------------------------------------
-// Activity
-// -----------------------------------------------------------------------------
+export const deleteSavedView = (id: string) =>
+  request<{ deleted: boolean }>(`/saved-views/${id}`, { method: 'DELETE' });
 
-export async function getActivity(limit = 20): Promise<ActivityLog[]> {
-  return request<ActivityLog[]>(`/activity?limit=${limit}`);
-}
+export const getPromptTemplates = () => request<PromptTemplate[]>('/prompt-templates');
 
-// -----------------------------------------------------------------------------
-// Catalog: workspaces, blueprints, collections, tags, relation types
-// -----------------------------------------------------------------------------
+export const createPromptTemplate = (payload: PromptTemplateCreate) =>
+  request<PromptTemplate>('/prompt-templates', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 
-export async function getWorkspaces(): Promise<import('./types').Workspace[]> {
-  return request<import('./types').Workspace[]>('/workspaces');
-}
-
-export async function getBlueprints(): Promise<Blueprint[]> {
-  return request<Blueprint[]>('/blueprints');
-}
-
-export async function getCollections(): Promise<Collection[]> {
-  return request<Collection[]>('/collections');
-}
-
-export async function getTags(): Promise<Tag[]> {
-  return request<Tag[]>('/tags');
-}
-
-export async function getRelationTypes(): Promise<import('./types').RelationType[]> {
-  return request<import('./types').RelationType[]>('/relation-types');
-}
-
-// -----------------------------------------------------------------------------
-// Studio: prompt templates, preferences
-// -----------------------------------------------------------------------------
-
-export async function getPromptTemplates(): Promise<PromptTemplate[]> {
-  return request<PromptTemplate[]>('/prompt-templates');
-}
-
-export async function getPreferences(): Promise<Preferences> {
-  return request<Preferences>('/preferences');
-}
-
-export async function updatePreferences(
-  payload: PreferencesUpdate
-): Promise<Preferences> {
-  return request<Preferences>('/preferences', {
+export const updatePromptTemplate = (id: string, payload: PromptTemplateUpdate) =>
+  request<PromptTemplate>(`/prompt-templates/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
-}
+
+export const deletePromptTemplate = (id: string) =>
+  request<{ deleted: boolean }>(`/prompt-templates/${id}`, { method: 'DELETE' });
+
+export const renderPromptContext = (itemId: string, templateId: string) =>
+  request<{ name: string; text: string }>(
+    `/items/${itemId}/prompt-context${qs({ template_id: templateId })}`
+  );
+
+// ------------------------------------------------------------- preferences
+export const getPreferences = () => request<Preferences>('/preferences');
+
+export const updatePreferences = (payload: PreferencePayload) =>
+  request<Preferences>('/preferences', {
+    method: 'PATCH',
+    body: JSON.stringify({ payload }),
+  });

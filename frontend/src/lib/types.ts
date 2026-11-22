@@ -1,10 +1,14 @@
 /**
- * TypeScript types matching FastAPI /api/v1 schemas exactly.
- * Generated from backend/app/models/ items.py, common.py, library.py
+ * TypeScript mirrors of the FastAPI models in backend/app/models/.
+ *
+ * Every shape here is checked against the Pydantic model it mirrors; when a
+ * backend model changes, this file changes with it. Response models are
+ * `extra="forbid"` on input only, so responses may carry fields listed here
+ * and nothing else is relied upon.
  */
 
 // -----------------------------------------------------------------------------
-// Shared enums & pagination
+// Enums (backend/app/models/common.py)
 // -----------------------------------------------------------------------------
 
 export type SourceFormat =
@@ -16,6 +20,17 @@ export type SourceFormat =
   | 'json'
   | 'web_article'
   | 'note';
+
+export const SOURCE_FORMATS: SourceFormat[] = [
+  'pdf',
+  'docx',
+  'markdown',
+  'text',
+  'csv',
+  'json',
+  'web_article',
+  'note',
+];
 
 export type ProcessingStatus =
   | 'pending'
@@ -32,33 +47,52 @@ export type TriageStatus =
   | 'evergreen'
   | 'cold_archive';
 
+export const TRIAGE_STATUSES: TriageStatus[] = [
+  'inbox',
+  'reading',
+  'processed',
+  'evergreen',
+  'cold_archive',
+];
+
 export type SegmentStatus = 'ok' | 'empty' | 'scanned' | 'failed' | 'skipped';
 
 export type ParaType = 'project' | 'area' | 'resource' | 'archive';
+
+export const PARA_TYPES: ParaType[] = ['project', 'area', 'resource', 'archive'];
 
 export type SavedViewKind = 'library' | 'search';
 
 export type ExportFormat = 'markdown' | 'json' | 'bibtex' | 'apa' | 'mla';
 
+export const EXPORT_FORMATS: { value: ExportFormat; label: string }[] = [
+  { value: 'markdown', label: 'Markdown + YAML' },
+  { value: 'json', label: 'JSON' },
+  { value: 'bibtex', label: 'BibTeX' },
+  { value: 'apa', label: 'APA' },
+  { value: 'mla', label: 'MLA' },
+];
+
 export type TimeBudget = 'quick' | 'medium' | 'deep';
+
+export const TIME_BUDGETS: { value: TimeBudget; label: string }[] = [
+  { value: 'quick', label: '< 5 min' },
+  { value: 'medium', label: '15–30 min' },
+  { value: 'deep', label: 'Deep study' },
+];
 
 export type FieldType = 'text' | 'number' | 'date' | 'select' | 'boolean' | 'url';
 
-export interface BlueprintFieldSpec {
-  key: string;
-  label: string;
-  type: FieldType;
-  options: string[];
-  default: unknown | null;
-  required: boolean;
-  help: string | null;
-}
+export const FIELD_TYPES: FieldType[] = [
+  'text',
+  'number',
+  'date',
+  'select',
+  'boolean',
+  'url',
+];
 
-export interface BlueprintFieldValue {
-  key: string;
-  value: unknown;
-}
-
+/** `Page[T]` from common.py. */
 export interface Page<T> {
   items: T[];
   total: number;
@@ -66,18 +100,18 @@ export interface Page<T> {
   offset: number;
 }
 
-// -----------------------------------------------------------------------------
-// Segments
-// -----------------------------------------------------------------------------
-
-export interface SegmentCreate {
-  segment_index: number;
-  segment_label: string;
-  content: string;
-  is_scanned: boolean;
-  extraction_status: SegmentStatus;
-  metadata: Record<string, unknown>;
+/** `{"error": {...}}` from app/errors.py. */
+export interface ApiErrorBody {
+  error: {
+    code: string;
+    message: string;
+    detail: unknown | null;
+  };
 }
+
+// -----------------------------------------------------------------------------
+// Segments (items.py)
+// -----------------------------------------------------------------------------
 
 export interface Segment {
   id: string;
@@ -105,34 +139,91 @@ export interface SegmentIntegrity {
 }
 
 // -----------------------------------------------------------------------------
-// Items
+// Items (items.py)
 // -----------------------------------------------------------------------------
 
-export interface ItemCreate {
-  title: string | null;
-  source_format: SourceFormat;
-  source_uri: string | null;
+export interface Item {
+  id: string;
+  workspace_id: string;
   blueprint_id: string | null;
-  triage_status: TriageStatus;
-  collection_ids: string[];
-  tags: string[];
-  custom_fields: BlueprintFieldValue[];
+  title: string;
+  source_format: string;
+  source_uri: string | null;
+  snapshot_uri: string | null;
+  mime_type: string | null;
+  file_size: number | null;
+  word_count: number;
+  est_read_minutes: number;
+  content_hash: string | null;
+  processing_status: string;
+  triage_status: string;
+  reading_progress: Record<string, unknown>;
+  error_message: string | null;
+  summary: string | null;
+  custom_fields: Record<string, unknown>;
   metadata: Record<string, unknown>;
-  note_content: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ItemLinkView {
+  id: string;
+  source_item_id: string;
+  target_item_id: string;
+  relation_type_id: string;
+  relation_name: string | null;
+  source_segment_id: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+/** `ItemDetail` — item plus everything the inspector drawer needs. */
+export interface ItemDetail extends Item {
+  tags: Tag[];
+  collections: Collection[];
+  segments: Segment[] | null;
+  links: ItemLinkView[];
+  integrity: SegmentIntegrity | null;
+  blueprint_fields: BlueprintFieldSpec[];
+}
+
+export interface ItemCreate {
+  title?: string | null;
+  source_format?: SourceFormat;
+  workspace_id?: string | null;
+  blueprint_id?: string | null;
+  source_uri?: string | null;
+  mime_type?: string | null;
+  content?: string | null;
+  triage_status?: TriageStatus;
+  custom_fields?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  tags?: string[];
+  collection_ids?: string[];
 }
 
 export interface ItemUpdate {
-  title: string | null;
-  blueprint_id: string | null;
-  triage_status: TriageStatus | null;
-  collection_ids: string[] | null;
-  tags: string[] | null;
-  custom_fields: BlueprintFieldValue[] | null;
-  metadata: Record<string, unknown> | null;
+  title?: string;
+  blueprint_id?: string | null;
+  triage_status?: TriageStatus;
+  summary?: string | null;
+  custom_fields?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  /** Full replacement of the item's tag set. */
+  tags?: string[];
+  /** Full replacement of the item's collection membership. */
+  collection_ids?: string[];
 }
 
 export interface TriageUpdate {
   triage_status: TriageStatus;
+}
+
+export interface ProgressUpdate {
+  segment_index?: number;
+  segment_label?: string;
+  percent?: number;
+  location?: Record<string, unknown>;
 }
 
 export interface NoteContentUpdate {
@@ -142,93 +233,31 @@ export interface NoteContentUpdate {
 export interface ItemLinkCreate {
   target_item_id: string;
   relation_type_id: string;
-  note: string | null;
-}
-
-export interface ItemLinkView {
-  id: string;
-  source_item_id: string;
-  target_item_id: string;
-  relation_type_id: string;
-  relation_name: string;
-  relation_forward: string;
-  relation_reverse: string;
-  note: string | null;
-  created_at: string;
-}
-
-export interface Item {
-  id: string;
-  workspace_id: string;
-  title: string | null;
-  source_format: SourceFormat;
-  blueprint_id: string | null;
-  blueprint_name: string | null;
-  triage_status: TriageStatus;
-  est_read_minutes: number;
-  word_count: number;
-  metadata: Record<string, unknown>;
-  custom_fields: BlueprintFieldValue[];
-  collections: Collection[];
-  tags: Tag[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ItemDetail extends Item {
-  segments: Segment[];
-  links: ItemLinkView[];
-  backlinks: ItemLinkView[];
-  segment_integrity: SegmentIntegrity;
-}
-
-export interface ProgressUpdate {
-  item_id: string;
-  segment_index: number;
+  note?: string | null;
 }
 
 // -----------------------------------------------------------------------------
-// Ingest
+// Ingest (items.py)
 // -----------------------------------------------------------------------------
-
-export interface IngestTextRequest {
-  text: string;
-  source_format: SourceFormat;
-  title: string | null;
-  blueprint_id: string | null;
-  triage_status: TriageStatus;
-  collection_ids: string[];
-  tags: string[];
-  custom_fields: BlueprintFieldValue[];
-}
-
-export interface IngestUrlRequest {
-  url: string;
-  title: string | null;
-  blueprint_id: string | null;
-  triage_status: TriageStatus;
-  collection_ids: string[];
-  tags: string[];
-  custom_fields: BlueprintFieldValue[];
-  force_paste_fallback: boolean;
-}
-
-export interface IngestFormatsResponse {
-  formats: SourceFormat[];
-  extractors: Record<string, boolean>;
-  file_only: SourceFormat[];
-  paste_supported: SourceFormat[];
-}
 
 export interface IngestResult {
   item: Item;
-  segments: Segment[];
+  duplicate: boolean;
+  segments_created: number;
   warnings: string[];
-  deduplication: { duplicate: boolean; existing_item_id: string | null };
+  engine: string | null;
+  integrity: SegmentIntegrity | null;
+}
+
+export interface IngestFormats {
+  formats: string[];
+  extractors: Record<string, unknown>;
+  file_only: string[];
+  paste_supported: string[];
 }
 
 // -----------------------------------------------------------------------------
-// Search
+// Search (items.py)
 // -----------------------------------------------------------------------------
 
 export interface SearchHit {
@@ -254,22 +283,8 @@ export interface SearchResponse {
   facets: Record<string, Record<string, number>>;
 }
 
-export interface LibraryFilters {
-  workspace_id?: string | null;
-  source_format: SourceFormat | null;
-  blueprint_id?: string | null;
-  triage_status?: TriageStatus | null;
-  collection_id?: string | null;
-  tag?: string | null;
-  time_budget?: TimeBudget | null;
-  q?: string | null;
-  sort: 'recent' | 'created' | 'title' | 'reading_time' | 'word_count';
-  limit: number;
-  offset: number;
-}
-
 // -----------------------------------------------------------------------------
-// Dashboard
+// Dashboard (items.py)
 // -----------------------------------------------------------------------------
 
 export interface DashboardStats {
@@ -285,21 +300,8 @@ export interface DashboardStats {
 }
 
 // -----------------------------------------------------------------------------
-// Catalog: Workspaces, Blueprints, Collections, Tags, Relation Types
+// Catalog (library.py)
 // -----------------------------------------------------------------------------
-
-export interface WorkspaceCreate {
-  name: string;
-  slug: string | null;
-  description: string | null;
-  is_default: boolean;
-}
-
-export interface WorkspaceUpdate {
-  name: string | null;
-  description: string | null;
-  is_default: boolean | null;
-}
 
 export interface Workspace {
   id: string;
@@ -310,88 +312,118 @@ export interface Workspace {
   created_at: string;
 }
 
-export interface BlueprintCreate {
+export interface WorkspaceCreate {
   name: string;
-  description: string | null;
-  fields_schema: BlueprintFieldSpec[];
+  slug?: string | null;
+  description?: string | null;
+  is_default?: boolean;
 }
 
-export interface BlueprintUpdate {
-  name: string | null;
-  description: string | null;
-  fields_schema: BlueprintFieldSpec[] | null;
+export interface WorkspaceUpdate {
+  name?: string;
+  description?: string | null;
+  is_default?: boolean;
+}
+
+export interface BlueprintFieldSpec {
+  key: string;
+  label: string;
+  type: FieldType;
+  options: string[];
+  default?: unknown | null;
+  required: boolean;
+  help?: string | null;
+}
+
+export interface BlueprintFieldsSchema {
+  fields: BlueprintFieldSpec[];
 }
 
 export interface Blueprint {
   id: string;
   name: string;
   description: string | null;
-  fields_schema: BlueprintFieldSpec[];
+  default_formats: string[];
+  fields_schema: BlueprintFieldsSchema;
   created_at: string;
-  updated_at: string;
 }
 
-export interface CollectionCreate {
+export interface BlueprintCreate {
   name: string;
-  parent_id: string | null;
-  description: string | null;
-  color: string | null;
-  para_type: ParaType | null;
+  description?: string | null;
+  default_formats?: SourceFormat[];
+  fields_schema?: BlueprintFieldsSchema;
 }
 
-export interface CollectionUpdate {
-  name: string | null;
-  parent_id: string | null;
-  description: string | null;
-  color: string | null;
-  para_type: ParaType | null;
+export interface BlueprintUpdate {
+  name?: string;
+  description?: string | null;
+  default_formats?: SourceFormat[];
+  fields_schema?: BlueprintFieldsSchema;
 }
 
 export interface Collection {
   id: string;
   workspace_id: string;
   name: string;
-  parent_id: string | null;
   description: string | null;
-  color: string | null;
-  para_type: ParaType | null;
-  path: string;
+  para_type: string | null;
+  parent_id: string | null;
   created_at: string;
-  updated_at: string;
+}
+
+export interface CollectionNode extends Collection {
+  children: CollectionNode[];
+}
+
+export interface CollectionCreate {
+  workspace_id: string;
+  name: string;
+  description?: string | null;
+  para_type?: ParaType | null;
+  parent_id?: string | null;
+}
+
+export interface CollectionUpdate {
+  name?: string;
+  description?: string | null;
+  para_type?: ParaType | null;
+  parent_id?: string | null;
 }
 
 export interface Tag {
   id: string;
   name: string;
   aliases: string[];
-  usage_count: number;
   created_at: string;
+  item_count: number;
+}
+
+export interface TagMergeRequest {
+  source_tag_id: string;
+  target_tag_id: string;
+}
+
+export interface TagMergeResult {
+  target_tag: Tag;
+  moved_items: number;
+  deleted_tag_id: string;
 }
 
 export interface RelationType {
   id: string;
   name: string;
-  forward: string;
-  reverse: string;
   description: string | null;
 }
 
-// -----------------------------------------------------------------------------
-// Studio: Saved Views, Prompt Templates, Preferences
-// -----------------------------------------------------------------------------
-
-export interface SavedViewCreate {
+export interface RelationTypeCreate {
   name: string;
-  kind: SavedViewKind;
-  config: Record<string, unknown>;
-  is_pinned: boolean;
+  description?: string | null;
 }
 
-export interface SavedViewUpdate {
-  name: string | null;
-  config: Record<string, unknown> | null;
-  is_pinned: boolean | null;
-}
+// -----------------------------------------------------------------------------
+// Studio (library.py)
+// -----------------------------------------------------------------------------
 
 export interface SavedView {
   id: string;
@@ -403,16 +435,18 @@ export interface SavedView {
   created_at: string;
 }
 
-export interface PromptTemplateCreate {
+export interface SavedViewCreate {
   name: string;
-  body: string;
-  description: string | null;
+  workspace_id?: string | null;
+  kind?: SavedViewKind;
+  config?: Record<string, unknown>;
+  is_pinned?: boolean;
 }
 
-export interface PromptTemplateUpdate {
-  name: string | null;
-  body: string | null;
-  description: string | null;
+export interface SavedViewUpdate {
+  name?: string;
+  config?: Record<string, unknown>;
+  is_pinned?: boolean;
 }
 
 export interface PromptTemplate {
@@ -423,17 +457,41 @@ export interface PromptTemplate {
   created_at: string;
 }
 
-export interface PreferencesUpdate {
-  payload: Record<string, unknown>;
+export interface PromptTemplateCreate {
+  name: string;
+  body: string;
+  description?: string | null;
+}
+
+export interface PromptTemplateUpdate {
+  name?: string;
+  body?: string;
+  description?: string | null;
+}
+
+/** Keys the backend seeds in `resolved_preferences` (services/studio.py). */
+export interface PreferencePayload {
+  font_family: string;
+  font_scale: number;
+  reading_width: string;
+  accent: string;
+  palette: string;
+  dark: boolean;
+  density: string;
+  [key: string]: unknown;
 }
 
 export interface Preferences {
-  payload: Record<string, unknown>;
+  payload: PreferencePayload;
   updated_at: string;
 }
 
+export interface PreferencesUpdate {
+  payload: PreferencePayload;
+}
+
 // -----------------------------------------------------------------------------
-// Activity
+// Activity (library.py)
 // -----------------------------------------------------------------------------
 
 export interface ActivityLog {
@@ -446,8 +504,20 @@ export interface ActivityLog {
 }
 
 // -----------------------------------------------------------------------------
-// System / Auth / Health
+// System (system.py)
 // -----------------------------------------------------------------------------
+
+export interface ExtractorInfo {
+  name: string;
+  formats: string[];
+  extensions: string[];
+}
+
+export interface EngineInfo {
+  engine: string;
+  available: boolean;
+  detail: string;
+}
 
 export interface HealthResponse {
   status: 'ok' | 'degraded';
@@ -458,8 +528,8 @@ export interface HealthResponse {
   };
   database: Record<string, unknown>;
   storage: Record<string, unknown>;
-  extractors: Record<string, boolean>;
-  engines: Record<string, boolean>;
+  extractors: ExtractorInfo[];
+  engines: EngineInfo[];
   limits: {
     max_upload_mb: number;
     page_size_default: number;
@@ -470,36 +540,6 @@ export interface HealthResponse {
 
 export interface SessionResponse {
   authenticated: boolean;
-  mode: 'dev_open' | 'key' | 'locked';
-}
-
-export interface MetaResponse {
-  api: string;
-  auth: {
-    header: string;
-    cookie: string;
-    session_endpoint: string;
-  };
-  pagination: {
-    limit_param: string;
-    offset_param: string;
-    max_limit: number;
-  };
-  error_shape: {
-    error: {
-      code: string;
-      message: string;
-      detail: string | null;
-    };
-  };
-  triage_statuses: TriageStatus[];
-  source_formats: SourceFormat[];
-}
-
-export interface ApiError {
-  error: {
-    code: string;
-    message: string;
-    detail: unknown | null;
-  };
+  /** `passcode` is returned by POST (cookie just set); `key` by GET (cookie valid). */
+  mode: 'dev_open' | 'key' | 'passcode' | 'locked';
 }

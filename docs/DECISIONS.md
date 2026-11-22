@@ -186,21 +186,23 @@ is auditable.
 
 **Context.** Stage 5A initializes Next.js 14 App Router for the frontend. Next.js 14.1.3
 defaults to SWC as its compiler, which requires native binary packages per platform.
-On ARM64 Android, `@next/swc-android-arm64` is not available in npm (404), breaking
-`next build`. `webpackBuildWorker: true` (default) also causes `EPIPE` crashes in
-Node.js worker threads on this device.
+On ARM64 Android, `@next/swc-android-arm64` is not published to npm (404), so `next build`
+fails while trying to download it.
 
-**Decision.** Configure `experimental.useWasmBinary: true` and
-`experimental.webpackBuildWorker: false` in `next.config.mjs`, and install
-`@next/swc-wasm-nodejs` manually into `frontend/node_modules`. This enables the WASM
-SWC fallback path instead of attempting a native binary download.
+**Decision.** The workaround is opt-in, not the default: `next.config.mjs` only sets
+`experimental.useWasmBinary` and `experimental.webpackBuildWorker: false` when
+`NEXUS_SWC_WASM=1` is present. Linux and Vercel builds therefore use native SWC with no
+experimental flags at all, and this device can opt in when experimenting. The rewrite
+proxy is always configured.
 
-**Consequences.** The frontend builds using SWC WASM fallback on ARM64 Android rather
-than native SWC binaries. This is an environment-specific workaround; production builds
-(arm64/x86 on standard CI) use native SWC normally.
+**Consequences.** Production builds are unaffected by the device constraint. On this
+device `next build` still fails at the native download step even with the flag (the
+WASM fallback is not reached in 14.1.3), so verification here is `tsc --noEmit` plus a
+Tailwind CLI compile rather than a full production build. That gap is documented, not
+hidden.
 
-**Alternatives rejected.** Webpack compiler (not available in Next.js 14 default);
-Turbopack (experimental, uses SWC too); older Next.js versions (too invasive).
+**Alternatives rejected.** Forcing `useWasmBinary` globally (breaks clean builds on
+Linux); downgrading Next.js (invasive); vendoring a fake native package (fragile).
 
 ---
 
@@ -236,3 +238,82 @@ search, omni-capture, theme engine, cold-start wake banner, and passcode gate.
 decorative clutter or unnecessary animations. Stage 5B (Item Inspector, Collections/
 Tags Manager, Studio, Settings, PWA Share Target) and Stage 6 (smoke test/deployment
 docs) are deliberately out of scope for Stage 5A.
+
+---
+
+## ADR-015 — `ts_headline` snippets are parsed, never injected
+
+**Context.** `GET /api/v1/search` returns `snippet` from PostgreSQL `ts_headline`, which
+wraps matched terms in delimiters (`<b>…</b>`). The surrounding text is document
+content — arbitrary user-supplied HTML, scripts included.
+
+**Decision.** `HighlightedSnippet` splits the snippet on the two delimiters and renders
+each piece as a React text node inside `<strong>` or `<span>`. No
+`dangerouslySetInnerHTML` anywhere in the frontend.
+
+**Consequences.** Document HTML is escaped by React automatically, so a captured page
+containing `<script>` cannot execute in the search results. The cost is one small parser
+and the assumption that the delimiters stay `<b>`/`</b>` — if `ts_headline` options
+change, `HighlightedSnippet` must change with them.
+
+**Alternatives rejected.** `dangerouslySetInnerHTML` (XSS by design); server-side
+sanitising (extra dependency, and the highlight would still need re-marking).
+
+---
+
+## ADR-016 — Membership edits go through `PATCH /items/{id}`
+
+**Context.** Stage 5B's inspector lets the user change an item's collections and tags
+after capture. Those live in the `item_collections` and `item_tags` join tables, and no
+route existed to change them outside ingest.
+
+**Decision.** `ItemUpdate` gains optional `tags` and `collection_ids`. Sending either
+replaces that membership wholesale (`replace_for_item`); omitting it leaves membership
+untouched. The service pops both keys before the row update, because they are not columns.
+
+**Consequences.** One endpoint covers metadata and membership, and "clear all tags" is
+expressible as `[]` rather than a separate delete call. The replace semantics mean a
+client must send the complete list, never a delta — documented on the model and covered
+by `test_item_update_membership_lists_are_optional_and_replace_not_patch`.
+
+**Alternatives rejected.** Separate `/items/{id}/tags` routes (more surface, same
+transaction); patching only at ingest (forces re-capture to re-file an item).
+
+---
+
+## ADR-017 — Unlocking a real `next build` on ARM64 Android
+
+**Context.** ADR-013 recorded that `next build` could not complete on this device. Three
+separate defects blocked it, each found by running the build and reading the failure:
+
+1. `next/dist/build/webpack-config.js` calls `getBinaryMetadata()`, which calls
+   `loadBindings()` **with no argument**. `loadBindings()` caches only its first call, so
+   that argument-less call took the native-binary path first, failed, and exited the
+   process before the `useWasmBinary` call site was ever reached.
+2. The webpack build worker forks a child process that dies immediately (`write EPIPE` in
+   `jest-worker`), killing the compile before it starts.
+3. The page-data and type-check workers fork the same way and died at the same point.
+
+**Decision.**
+- `frontend/scripts/next.mjs` is the entry point for `dev`, `build` and `start`. It awaits
+  `loadBindings(true)` **before** requiring `next/dist/bin/next`, so the cached bindings are
+  the WASM ones and every later `loadBindings()` call — with or without the argument —
+  reuses them.
+- `next.config.mjs` enables `experimental.useWasmBinary`, `webpackBuildWorker: false` and
+  `experimental.workerThreads: true` when `process.platform === 'android'` (or when
+  `NEXUS_SWC_WASM=1` is set). `workerThreads` runs those workers as threads instead of
+  forks, which sidesteps the EPIPE.
+- `package.json` scripts call tools by path (`node scripts/next.mjs`,
+  `node node_modules/typescript/lib/tsc.js`) because the workspace sits on shared storage
+  where npm installs with `--no-bin-links`, leaving `node_modules/.bin` empty.
+
+**Consequences.** A full production build now succeeds on this device: 10 routes, 84.5 kB
+shared JS. Linux/Vercel builds are unaffected — the platform check is false there, so no
+experimental flags are applied and native SWC is used. The WASM compiler is slower (a cold
+build takes about 100 s here) and webpack logs a harmless
+`Caching failed for pack: Unable to snapshot resolve dependencies` warning from the
+filesystem.
+
+**Alternatives rejected.** Patching `node_modules` (lost on reinstall); adding a Babel
+config to bypass SWC entirely (much slower, and SWC is still used for minification);
+`typescript.ignoreBuildErrors` to dodge defect 3 (would hide real type errors).

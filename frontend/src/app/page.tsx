@@ -1,17 +1,25 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import Shell from '@/components/Shell';
 import OmniCaptureModal from '@/components/OmniCaptureModal';
-import { useHealth } from '@/lib/useHealth';
 import { getDashboard } from '@/lib/api';
-import { DashboardStats } from '@/lib/types';
+import type { DashboardStats } from '@/lib/types';
 
-function Card({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
+function Panel({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="rounded-xl border border-white/10 bg-[var(--surface)] p-4">
-      <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-medium tracking-tight">{title}</h2>
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+      <header className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-xs font-medium uppercase tracking-wider opacity-60">{title}</h2>
         {action}
       </header>
       {children}
@@ -19,149 +27,192 @@ function Card({ title, children, action }: { title: string; children: React.Reac
   );
 }
 
-function Stat({ label, value }: { label: string; value: number | string }) {
+function Figure({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="flex flex-col">
-      <span className="text-lg font-semibold tabular-nums">{value}</span>
-      <span className="text-xs opacity-60">{label}</span>
+    <div>
+      <p className="text-xl font-semibold tabular-nums">{value}</p>
+      <p className="text-[11px] opacity-50">{label}</p>
     </div>
   );
 }
 
-function ItemRow({ item }: { item: { id: string; title: string | null; source_format: string } }) {
-  return (
-    <a
-      href={`/items/${item.id}`}
-      className="flex items-center justify-between gap-3 rounded-lg px-2 py-2 text-sm hover:bg-white/5"
-    >
-      <span className="min-w-0 flex-1 truncate">{item.title || <span className="opacity-50">Untitled</span>}</span>
-      <span className="shrink-0 rounded bg-white/10 px-2 py-0.5 text-[10px] uppercase opacity-70">{item.source_format}</span>
-    </a>
-  );
-}
-
 export default function DashboardPage() {
-  const { showBanner, check, status } = useHealth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState('');
-  const [captureOpen, setCaptureOpen] = useState(false);
+  const [capture, setCapture] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    getDashboard().then((s) => { if (!cancelled) setStats(s); }).catch(() => setError('Failed to load dashboard'));
-    return () => { cancelled = true; };
+    getDashboard()
+      .then((res) => !cancelled && setStats(res))
+      .catch((err: unknown) =>
+        !cancelled && setError(err instanceof Error ? err.message : 'Dashboard unavailable')
+      );
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const totals = stats?.totals || {};
-  const byFormat = stats?.by_format || {};
-  const byBlueprint = stats?.by_blueprint || {};
+  const totals = stats?.totals ?? {};
 
   return (
     <Shell>
-      <div className="mx-auto max-w-4xl space-y-4">
-        <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
-
-        <form className="flex items-center gap-2">
-          <input
-            type="search"
-            placeholder="Search across everything…"
-            className="w-full rounded-lg border border-white/10 bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)]"
-          />
+      <div className="space-y-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <h1 className="text-lg font-semibold tracking-tight">Dashboard</h1>
           <button
             type="button"
-            onClick={() => setCaptureOpen(true)}
-            className="shrink-0 rounded-lg bg-[var(--accent)] px-3 py-2.5 text-sm font-medium text-black"
+            onClick={() => setCapture(true)}
+            className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-black"
           >
-            Capture
+            Quick capture
+          </button>
+        </div>
+
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            const value = new FormData(event.currentTarget).get('q');
+            const query = typeof value === 'string' ? value.trim() : '';
+            if (query) window.location.href = `/search?q=${encodeURIComponent(query)}`;
+          }}
+          className="flex gap-2"
+        >
+          <input
+            name="q"
+            type="search"
+            placeholder="Search everything…"
+            className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+          />
+          <button type="submit" className="rounded-lg border border-[var(--border)] px-3 text-xs">
+            Go
           </button>
         </form>
 
         {error ? (
-          <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs">
             {error}
           </p>
         ) : null}
 
-        {!stats && !error ? (
-          <p className="text-sm opacity-60">Loading dashboard…</p>
-        ) : null}
+        {!stats && !error ? <p className="text-sm opacity-50">Loading…</p> : null}
 
         {stats ? (
           <>
-            <Card title="Library overview">
+            <Panel title="Library">
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <Stat label="Items" value={totals.items ?? 0} />
-                <Stat label="Inbox" value={totals.inbox ?? 0} />
-                <Stat label="Segments" value={totals.segments ?? 0} />
-                <Stat label="Scanned" value={stats.scanned_segments} />
+                <Figure label="Items" value={totals.items ?? 0} />
+                <Figure label="Inbox" value={totals.inbox ?? 0} />
+                <Figure label="Reading" value={totals.reading ?? 0} />
+                <Figure label="Segments" value={totals.segments ?? 0} />
               </div>
-            </Card>
+              {stats.scanned_segments > 0 || stats.failed_extractions > 0 ? (
+                <p className="mt-3 text-[11px] text-amber-300">
+                  {stats.scanned_segments} scanned segment(s) ·{' '}
+                  {stats.failed_extractions} failed extraction(s)
+                </p>
+              ) : null}
+            </Panel>
 
-            <Card title="By format">
-              {Object.keys(byFormat).length === 0 ? (
-                <p className="text-xs opacity-60">Nothing captured yet.</p>
-              ) : (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {Object.entries(byFormat).map(([format, count]) => (
-                    <Stat key={format} label={format.replace('_', ' ')} value={count} />
-                  ))}
-                </div>
-              )}
-            </Card>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Panel title="By format">
+                {Object.keys(stats.by_format).length === 0 ? (
+                  <p className="text-xs opacity-50">Nothing captured yet.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {Object.entries(stats.by_format).map(([format, count]) => (
+                      <Figure key={format} label={format.replace(/_/g, ' ')} value={count} />
+                    ))}
+                  </div>
+                )}
+              </Panel>
 
-            {Object.keys(byBlueprint).length > 0 ? (
-              <Card title="By blueprint">
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {Object.entries(byBlueprint).map(([name, count]) => (
-                    <Stat key={name} label={name} value={count} />
-                  ))}
-                </div>
-              </Card>
-            ) : null}
+              <Panel title="By blueprint">
+                {Object.keys(stats.by_blueprint).length === 0 ? (
+                  <p className="text-xs opacity-50">No blueprint assigned yet.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {Object.entries(stats.by_blueprint).map(([name, count]) => (
+                      <Figure key={name} label={name} value={count} />
+                    ))}
+                  </div>
+                )}
+              </Panel>
+            </div>
 
-            <Card title="Continue reading" action={<a href="/library" className="text-xs opacity-60 hover:opacity-100">Open library</a>}>
+            <Panel
+              title="Continue reading"
+              action={
+                <Link href="/library" className="text-[11px] opacity-60 hover:opacity-100">
+                  Library →
+                </Link>
+              }
+            >
               {stats.continue_reading.length === 0 ? (
-                <p className="text-xs opacity-60">Nothing in progress.</p>
+                <p className="text-xs opacity-50">Nothing in progress.</p>
               ) : (
-                <div className="space-y-1">
-                  {stats.continue_reading.slice(0, 5).map((item: any, i: number) => (
-                    <ItemRow key={i} item={item} />
-                  ))}
-                </div>
+                <ul className="space-y-1">
+                  {stats.continue_reading.map((item) => {
+                    const segment = Number(item.reading_progress?.segment_index ?? 0);
+                    return (
+                      <li key={item.id}>
+                        <Link
+                          href={`/items/${item.id}${segment ? `?segment=${segment}` : ''}`}
+                          className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+                        >
+                          <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                          <span className="shrink-0 text-[10px] uppercase opacity-50">
+                            {segment ? `resume ${segment}` : 'start'}
+                          </span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
-            </Card>
+            </Panel>
 
-            <Card title="Recently added">
+            <Panel title="Recently added">
               {stats.recently_added.length === 0 ? (
-                <p className="text-xs opacity-60">No items yet.</p>
+                <p className="text-xs opacity-50">No items yet.</p>
               ) : (
-                <div className="space-y-1">
-                  {stats.recently_added.slice(0, 5).map((item: any, i: number) => (
-                    <ItemRow key={i} item={item} />
+                <ul className="space-y-1">
+                  {stats.recently_added.map((item) => (
+                    <li key={item.id}>
+                      <Link
+                        href={`/items/${item.id}`}
+                        className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+                      >
+                        <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                        <span className="shrink-0 rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] uppercase opacity-60">
+                          {item.source_format}
+                        </span>
+                      </Link>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
-            </Card>
+            </Panel>
 
             {stats.recent_activity.length > 0 ? (
-              <Card title="Recent activity">
-                <ul className="space-y-2 text-sm">
-                  {stats.recent_activity.slice(0, 8).map((entry: any, i: number) => (
-                    <li key={i} className="flex gap-2 opacity-80">
-                      <span className="shrink-0 text-[10px] uppercase opacity-50">{new Date(entry.created_at).toLocaleDateString()}</span>
+              <Panel title="Recent activity">
+                <ul className="space-y-1.5 text-xs">
+                  {stats.recent_activity.map((entry) => (
+                    <li key={entry.id} className="flex gap-2 opacity-70">
+                      <span className="shrink-0 text-[10px] uppercase opacity-50">
+                        {new Date(entry.created_at).toLocaleDateString()}
+                      </span>
                       <span className="min-w-0 truncate">{entry.message}</span>
                     </li>
                   ))}
                 </ul>
-              </Card>
+              </Panel>
             ) : null}
           </>
         ) : null}
-
-        {captureOpen ? (
-          <OmniCaptureModal onClose={() => setCaptureOpen(false)} />
-        ) : null}
       </div>
+
+      {capture ? <OmniCaptureModal onClose={() => setCapture(false)} /> : null}
     </Shell>
   );
 }

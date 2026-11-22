@@ -86,14 +86,28 @@ def _collection_model(row: dict):
 def update_item(cur: psycopg.Cursor, item_id: UUID, payload: ItemUpdate) -> Item:
     require_item(cur, item_id)
     values = payload.model_dump(exclude_unset=True)
+    # Membership lists live in join tables, not on the items row.
+    tag_names = values.pop("tags", None)
+    collection_ids = values.pop("collection_ids", None)
     if "triage_status" in values and payload.triage_status is not None:
         values["triage_status"] = payload.triage_status.value
     updated = items.update(cur, item_id, values)
     if updated is None:  # pragma: no cover - row vanished mid-request
         raise not_found("item", item_id)
+    if tag_names is not None:
+        tags.replace_for_item(cur, item_id, list(tag_names))
+    if collection_ids is not None:
+        collections.replace_for_item(
+            cur, item_id, [UUID(str(entry)) for entry in collection_ids]
+        )
     activity.log(
         cur, "item.updated", f"Updated item: {updated['title'][:120]}",
-        item_id=item_id, metadata={"fields": sorted(values)},
+        item_id=item_id,
+        metadata={
+            "fields": sorted(values)
+            + (["tags"] if tag_names is not None else [])
+            + (["collections"] if collection_ids is not None else [])
+        },
     )
     return Item(**updated)
 

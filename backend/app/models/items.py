@@ -83,6 +83,9 @@ class ItemUpdate(NexusModel):
     summary: str | None = Field(default=None, max_length=6000)
     custom_fields: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
+    # Membership is a full replacement, not a patch: send the list you want.
+    tags: list[str] | None = Field(default=None, max_length=50)
+    collection_ids: list[UUID] | None = Field(default=None, max_length=50)
 
     @model_validator(mode="before")
     @classmethod

@@ -1,10 +1,23 @@
 /** @type {import('next').NextConfig} */
+// No native @next/swc-android-arm64 binary is published, so Android/arm64 builds
+// must run SWC from the WASM package and must not spawn webpack build workers
+// (the worker child process dies with EPIPE on this platform).
+const useWasmSwc =
+  process.env.NEXUS_SWC_WASM === '1' || process.platform === 'android';
+
 const nextConfig = {
   reactStrictMode: true,
-  experimental: {
-    useWasmBinary: true,
-    webpackBuildWorker: false,
-  },
+  ...(useWasmSwc
+    ? {
+        experimental: {
+          useWasmBinary: true,
+          webpackBuildWorker: false,
+          // Forked worker child processes die on this platform (EPIPE), so run
+          // the page-data/type-check workers as threads instead.
+          workerThreads: true,
+        },
+      }
+    : {}),
   async rewrites() {
     return [
       {

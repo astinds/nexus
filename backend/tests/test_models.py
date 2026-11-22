@@ -11,6 +11,7 @@ from app.models import (
     BlueprintFieldsSchema,
     IngestTextRequest,
     IngestUrlRequest,
+    ItemUpdate,
     LibraryFilters,
     PreferencesUpdate,
     ProgressUpdate,
@@ -108,3 +109,21 @@ def test_preferences_payload_accepts_arbitrary_tokens() -> None:
 def test_models_forbid_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         IngestTextRequest(text="hi", unexpected="nope")
+
+
+def test_item_update_membership_lists_are_optional_and_replace_not_patch() -> None:
+    """Tags and collections live in join tables; sending the list replaces it."""
+    assert ItemUpdate().model_dump(exclude_unset=True) == {}
+
+    update = ItemUpdate(
+        tags=["research", "policy"],
+        collection_ids=["3f9a3c1e-4f5b-4a2c-9d1e-0a1b2c3d4e5f"],
+    )
+    dumped = update.model_dump(exclude_unset=True)
+    assert dumped["tags"] == ["research", "policy"]
+    assert len(dumped["collection_ids"]) == 1
+
+
+def test_item_update_rejects_a_null_title() -> None:
+    with pytest.raises(ValidationError):
+        ItemUpdate(title=None)
