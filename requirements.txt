@@ -1,21 +1,11 @@
-# NEXUS backend runtime dependencies.
-# Target: Render Free Web Service (Linux x86_64/glibc), where these resolve to
-# prebuilt wheels. On Android/Termux use requirements-dev.txt instead: PyMuPDF
-# and psycopg[binary] have no bionic wheels there.
+# Repo-root convenience pointer.
+#
+# The canonical production dependency list lives in backend/requirements.txt,
+# because render.yaml uses `rootDir: backend` and installs from there. This
+# file only forwards to it so `pip install -r requirements.txt` still works when
+# run from the repo root.
+#
+# On Android/Termux use requirements-dev.txt instead: PyMuPDF and
+# psycopg[binary] have no bionic wheels there.
 
-fastapi>=0.115,<1.0
-uvicorn>=0.30,<1.0
-pydantic>=2.7,<3.0
-pydantic-settings>=2.2,<3.0
-python-multipart>=0.0.9
-httpx>=0.27,<1.0
-psycopg[binary]>=3.2,<4.0
-psycopg-pool>=3.2,<4.0
-
-# Extractors
-pymupdf>=1.24            # primary PDF engine: 1-based pages + scanned detection
-pypdf>=5.0               # pure-Python PDF fallback (kept for parity and safety)
-python-docx>=1.1
-beautifulsoup4>=4.12
-lxml>=5.2
-trafilatura>=1.9         # web article extraction; falls back to BeautifulSoup
+-r backend/requirements.txt
