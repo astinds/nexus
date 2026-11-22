@@ -6,7 +6,7 @@ from this page alone.
 Last updated: Stage 6 complete (self-verifying smoke test, CI, Render config, deployment docs).
 Stage 5A commit: `a51ed8a`
 Stage 5B commit: `94d4f1c`
-Stage 6 commit: (pending)
+Stage 6 commit: `31216b0`
 
 ---
 

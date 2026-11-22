@@ -6,7 +6,7 @@ It is written to be sufficient on its own: no chat history required.
 
 > **Status: Stage 6 of 6 complete** — self-verifying smoke test, CI, Render config,
 > deployment docs.
-> Commit: `94d4f1c` (Stage 5B+ARM64 unlock); Stage 6 commit to follow.
+> Commits: `94d4f1c` (Stage 5B+ARM64 unlock), `31216b0` (Stage 6)
 
 ---
 

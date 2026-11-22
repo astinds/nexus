@@ -14,20 +14,20 @@ from __future__ import annotations
 
 import argparse
 import os
+import struct
 import sys
 import uuid
+import zlib
 from dataclasses import dataclass
 from io import BytesIO
 
+
 try:
     import httpx
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib.units import inch
-    from reportlab.pdfgen import canvas
 except ImportError as e:
     if __name__ == "__main__":
         print(f"Missing dependency: {e}", file=sys.stderr)
-        print("Install with: pip install httpx reportlab", file=sys.stderr)
+        print("Install with: pip install httpx", file=sys.stderr)
         sys.exit(1)
     raise
 
@@ -44,36 +44,141 @@ class TestItem:
     phrase: str
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Minimal pure-Python PDF generator (no reportlab)
+# Produces a valid 2-page PDF:
+#   Page 1: contains the search phrase as extractable text
+#   Page 2: empty page (no text) — will be flagged is_scanned by extractor
+# ──────────────────────────────────────────────────────────────────────
+
+_PDF_HEADER = b"%PDF-1.4\n"
+
+# Page size: Letter (612 x 792 points)
+_PAGE_W = 612
+_PAGE_H = 792
+
+
+def _pdf_obj(num: int, gen: int, data: bytes) -> bytes:
+    return f"{num} {gen} obj\n".encode() + data + b"\nendobj\n"
+
+
+def _pdf_stream(num: int, gen: int, dict_data: bytes, stream_data: bytes) -> bytes:
+    header = f"{num} {gen} obj\n".encode()
+    header += dict_data + b"\nstream\n"
+    header += stream_data + b"\nendstream\nendobj\n"
+    return header
+
+
+def _make_content_stream(text: str) -> bytes:
+    """Create a simple text-showing content stream."""
+    # Escape parens and backslashes for PDF string
+    escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    # BT = begin text, ET = end text, Tf = set font, Td = move, Tj = show text
+    ops = (
+        "BT\n"
+        "/F1 12 Tf\n"
+        "72 720 Td\n"
+        f"({escaped}) Tj\n"
+        "ET\n"
+    )
+    return ops.encode()
+
+
+def _make_empty_content_stream() -> bytes:
+    """Empty content stream for page 2 (no text)."""
+    return b""
+
+
 def generate_test_pdf(phrase: str) -> bytes:
-    """Generate a 2-page PDF: Page 1 has `phrase`, Page 2 is a vector drawing with no text."""
+    """
+    Generate a 2-page PDF using pure Python.
+
+    Page 1: Contains the search phrase as extractable text.
+    Page 2: Empty page (no text content) — will be flagged is_scanned by extractor.
+    """
+    # Object numbering:
+    # 1: Catalog
+    # 2: Pages (parent of page objects)
+    # 3: Font resource
+    # 4: Page 1
+    # 5: Page 1 content stream
+    # 6: Page 2
+    # 7: Page 2 content stream
+
+    objects = []
+
+    # 1: Catalog
+    objects.append(_pdf_obj(1, 0, b"<< /Type /Catalog /Pages 2 0 R >>"))
+
+    # 2: Pages tree
+    objects.append(_pdf_obj(2, 0, b"<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>"))
+
+    # 3: Font resource (Helvetica, built-in)
+    objects.append(
+        _pdf_obj(3, 0, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    )
+
+    # 4: Page 1
+    page1_content = _make_content_stream(
+        f"NEXUS Smoke Test Document\nSearch phrase: {phrase}\nThis is Page 1 — it contains extractable text."
+    )
+    stream5_data = page1_content
+    stream5_dict = f"<< /Length {len(stream5_data)} >>".encode()
+    objects.append(
+        _pdf_stream(
+            5, 0, stream5_dict, stream5_data
+        )
+    )
+    objects.append(
+        _pdf_obj(
+            4,
+            0,
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_PAGE_W} {_PAGE_H}] "
+            f"/Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>".encode(),
+        )
+    )
+
+    # 6: Page 2
+    stream7_data = _make_empty_content_stream()
+    stream7_dict = f"<< /Length {len(stream7_data)} >>".encode()
+    objects.append(
+        _pdf_stream(
+            7, 0, stream7_dict, stream7_data
+        )
+    )
+    objects.append(
+        _pdf_obj(
+            6,
+            0,
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_PAGE_W} {_PAGE_H}] "
+            f"/Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>".encode(),
+        )
+    )
+
+    # Build file
     buf = BytesIO()
-    c = canvas.Canvas(buf, pagesize=letter)
-    width, height = letter
+    buf.write(_PDF_HEADER)
 
-    # Page 1: text with the unique phrase
-    c.setFont("Helvetica", 14)
-    c.drawString(1 * inch, height - 1.5 * inch, "NEXUS Smoke Test Document")
-    c.setFont("Helvetica", 12)
-    c.drawString(1 * inch, height - 2.2 * inch, f"Search phrase: {phrase}")
-    c.drawString(1 * inch, height - 2.8 * inch, "This is Page 1 — it contains extractable text.")
-    c.showPage()
+    # Track byte offsets for xref
+    offsets = [0]  # 0-index dummy
+    for obj in objects:
+        offsets.append(buf.tell())
+        buf.write(obj)
 
-    # Page 2: vector drawing only (shapes, no text)
-    # Draw some rectangles and circles as "vector content"
-    c.setStrokeColorRGB(0.2, 0.4, 0.8)
-    c.setFillColorRGB(0.8, 0.9, 1.0)
-    c.rect(1 * inch, height - 3 * inch, 3 * inch, 2 * inch, fill=1, stroke=1)
-    c.setFillColorRGB(1.0, 0.8, 0.8)
-    c.circle(4.5 * inch, height - 2 * inch, 1 * inch, fill=1, stroke=1)
-    c.setStrokeColorRGB(0.2, 0.7, 0.3)
-    c.setLineWidth(3)
-    c.line(1 * inch, 1.5 * inch, 5.5 * inch, 1.5 * inch)
-    # Intentionally NO text on Page 2
-    c.showPage()
+    xref_start = buf.tell()
+    buf.write(f"xref\n0 {len(offsets)}\n".encode())
+    buf.write(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        buf.write(f"{off:010d} 00000 n \n".encode())
 
-    c.save()
+    buf.write(f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF\n".encode())
+
     return buf.getvalue()
 
+
+# ──────────────────────────────────────────────────────────────────────
+# Smoke test runner
+# ──────────────────────────────────────────────────────────────────────
 
 class SmokeTest:
     def __init__(self, config: TestConfig):
@@ -219,7 +324,6 @@ class SmokeTest:
         if not markdown.startswith("---"):
             print(f"❌ Export missing YAML frontmatter: {markdown[:200]}", file=sys.stderr)
             sys.exit(1)
-        # Check for basic frontmatter fields
         required_fields = ["id", "title", "source_format", "created_at"]
         for field in required_fields:
             if f"{field}:" not in markdown:
@@ -244,28 +348,17 @@ class SmokeTest:
         print(f"🚀 Starting smoke test against {self.config.base_url}")
         print(f"   Access key: {'set' if self.config.access_key else 'none (dev mode)'}")
 
-        # Step 1: Health
         self.check_health()
-
-        # Step 2: Auth
         self.authenticate()
 
-        # Step 3: Generate PDF + Ingest
         phrase = f"NEXUS-SMOKE-{uuid.uuid4().hex[:12].upper()}"
         pdf_bytes = generate_test_pdf(phrase)
         print(f"📄 Generated 2-page PDF ({len(pdf_bytes)} bytes), phrase: {phrase}")
         item = self.ingest_pdf(pdf_bytes, phrase)
 
-        # Step 4: Check segments
         self.check_segments(item.item_id, phrase)
-
-        # Step 5: Search
         self.search_phrase(item.item_id, phrase)
-
-        # Step 6: Export
         self.export_item(item.item_id)
-
-        # Step 7: Delete
         self.delete_item(item.item_id)
 
         print("\n🎉 ALL SMOKE TESTS PASSED")

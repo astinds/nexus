@@ -24,7 +24,7 @@ jobs:
       - name: Ping health
         run: |
           echo "Pinging ${{ secrets.NEXUS_HEALTH_URL }}..."
-          curl -fsS --max-time 10 "${{ secrets.NEXUS_HEALTH_URL }}" | jq .
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 10 "${{ secrets.NEXUS_HEALTH_URL }}" | jq .
         env:
           # In case the health endpoint requires auth
           NEXUS_ACCESS_KEY: ${{ secrets.NEXUS_ACCESS_KEY }}

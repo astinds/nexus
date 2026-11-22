@@ -64,7 +64,9 @@ and `pkg install python-pymupdf libpq`. `--only-binary=:all:` is required there.
    Or run locally: `DATABASE_URL=... python scripts/apply_migrations.py`
 3. **Storage** → create a **private** bucket named `nexus-files`.
 4. **Project Settings → Database → Connection string → URI** — copy this as `DATABASE_URL`.
-   Prefer the **pooler** host (port 6543) for Render.
+   Use the **Shared Pooler (Session mode, port 5432, IPv4)** URI and append `?sslmode=require`.
+   Example:
+   `postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require`
 
 > Supabase Free has **no automatic backups**. The Settings page (Stage 5B) exports
 > everything as a ZIP; run it monthly.

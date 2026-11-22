@@ -1,7 +1,7 @@
 """Model exports. Import from `app.models` everywhere else."""
 
-# Re-exports for public API — intentionally unused at module level
-from .common import (  # noqa: F401
+# Re-exports for public API — explicitly listed in __all__ so pyflakes is clean
+from .common import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
     ExportFormat,
@@ -17,7 +17,7 @@ from .common import (  # noqa: F401
     clamp_offset,
     read_minutes,
 )
-from .items import (  # noqa: F401
+from .items import (
     DashboardStats,
     IngestResult,
     IngestTextRequest,
@@ -38,7 +38,7 @@ from .items import (  # noqa: F401
     SegmentIntegrity,
     TriageUpdate,
 )
-from .library import (  # noqa: F401
+from .library import (
     ActivityLog,
     Blueprint,
     BlueprintCreate,
@@ -69,4 +69,69 @@ from .library import (  # noqa: F401
     WorkspaceUpdate,
 )
 
-__all__ = [name for name in dir() if not name.startswith("_")]
+__all__ = [
+    # common
+    "DEFAULT_LIMIT",
+    "MAX_LIMIT",
+    "ExportFormat",
+    "Page",
+    "ParaType",
+    "ProcessingStatus",
+    "SavedViewKind",
+    "SegmentStatus",
+    "SourceFormat",
+    "TimeBudget",
+    "TriageStatus",
+    "clamp_limit",
+    "clamp_offset",
+    "read_minutes",
+    # items
+    "DashboardStats",
+    "IngestResult",
+    "IngestTextRequest",
+    "IngestUrlRequest",
+    "Item",
+    "ItemCreate",
+    "ItemDetail",
+    "ItemLinkCreate",
+    "ItemLinkView",
+    "ItemUpdate",
+    "LibraryFilters",
+    "NoteContentUpdate",
+    "ProgressUpdate",
+    "SearchHit",
+    "SearchResponse",
+    "Segment",
+    "SegmentCreate",
+    "SegmentIntegrity",
+    "TriageUpdate",
+    # library
+    "ActivityLog",
+    "Blueprint",
+    "BlueprintCreate",
+    "BlueprintFieldSpec",
+    "BlueprintFieldsSchema",
+    "BlueprintUpdate",
+    "Collection",
+    "CollectionCreate",
+    "CollectionNode",
+    "CollectionUpdate",
+    "Preferences",
+    "PreferencesUpdate",
+    "PromptTemplate",
+    "PromptTemplateCreate",
+    "PromptTemplateUpdate",
+    "RelationType",
+    "RelationTypeCreate",
+    "SavedView",
+    "SavedViewCreate",
+    "SavedViewUpdate",
+    "Tag",
+    "TagCreate",
+    "TagMergeRequest",
+    "TagMergeResult",
+    "TagUpdate",
+    "Workspace",
+    "WorkspaceCreate",
+    "WorkspaceUpdate",
+]

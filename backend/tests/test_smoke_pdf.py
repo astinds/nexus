@@ -5,7 +5,7 @@ Fast unit test for the PDF generator helper in scripts/smoke_test.py.
 Verifies the generator works offline without a live server:
 - Creates a 2-page PDF in memory
 - Page 1 contains the phrase
-- Page 2 has no text (vector only)
+- Page 2 has no text (empty content stream)
 """
 
 import io
@@ -18,13 +18,9 @@ except ImportError:
     import pytest
     pytest.skip("pypdf not installed", allow_module_level=True)
 
-# Try to import the smoke_test module
-try:
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
-    from smoke_test import generate_test_pdf
-except ImportError:
-    import pytest
-    pytest.skip("smoke_test dependencies not available (reportlab)", allow_module_level=True)
+# Import the smoke_test module
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+from smoke_test import generate_test_pdf
 
 
 def test_generate_test_pdf_creates_two_pages() -> None:
@@ -33,7 +29,7 @@ def test_generate_test_pdf_creates_two_pages() -> None:
     pdf_bytes = generate_test_pdf(phrase)
 
     assert isinstance(pdf_bytes, bytes)
-    assert len(pdf_bytes) > 1000  # reasonable size
+    assert len(pdf_bytes) > 500  # minimal valid PDF size
 
     reader = PdfReader(io.BytesIO(pdf_bytes))
     assert len(reader.pages) == 2
@@ -53,7 +49,7 @@ def test_generate_test_pdf_page1_has_phrase() -> None:
 
 
 def test_generate_test_pdf_page2_no_text() -> None:
-    """Page 2 is vector-only (no extractable text)."""
+    """Page 2 is empty (no extractable text)."""
     phrase = "SHOULD-NOT-APPEAR"
     pdf_bytes = generate_test_pdf(phrase)
 
