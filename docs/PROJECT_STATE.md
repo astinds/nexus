@@ -3,11 +3,23 @@
 Update this file at the end of **every** stage. A future model must be able to resume
 from this page alone.
 
-Last updated: Stage 6.1 complete (pre-deploy patch applied; pytest 136 passed, pyflakes clean).
+Last updated: Stage 6.1 complete and **pushed**; GitHub CI green (run #4, `fc7dcce`).
+Repository: https://github.com/astinds/nexus (branch `main`)
 Stage 5A commit: `a51ed8a`
 Stage 5B commit: `94d4f1c`
 Stage 6 commit: `31216b0`
-Stage 6.1 commit: `4285204`
+Stage 6.1 commit: `c4de5de` (pre-deploy patch), CI fixes: `95dafe4`, `e9079cd`, `fc7dcce`
+
+## CI status (verified on GitHub, not assumed)
+
+| Workflow | Run | Result |
+|---|---|---|
+| `ci.yml` | #4 on `fc7dcce` | ✅ success, 50 s (backend 19 s, frontend 46 s) |
+| `keep-alive.yml` | #3 on `fc7dcce` (workflow_dispatch) | ✅ success, skipped cleanly — `NEXUS_HEALTH_URL` not set |
+
+The Linux CI run proves native-SWC `next build` health: `NEXUS_SWC_WASM=0` is set in the
+frontend job, so `scripts/next.mjs` skips the WASM preload and Next uses
+`@next/swc-linux-x64-gnu`.
 
 ---
 
@@ -286,7 +298,17 @@ part of the repo and not required by the app.
 
 ## Next exact step
 
-Stage 5: Frontend core, PWA + mobile-safe inspector.
+**Go live.** The repo is pushed and CI is green; the remaining steps need the owner's
+Supabase / Render / Vercel accounts:
+
+1. Supabase: Shared Pooler **Session mode** (port 5432, IPv4) URI + `?sslmode=require`,
+   then `DATABASE_URL="..." python3 scripts/apply_migrations.py`, then a **private**
+   bucket `nexus-files`.
+2. Render: Blueprint from `render.yaml`, fill the `sync: false` secrets, wait for
+   `/api/v1/health` → `status: ok`.
+3. Vercel: root directory `frontend`, `API_BACKEND_URL=<render url>`.
+4. Proof: `python3 scripts/smoke_test.py --base-url <render url> --access-key <key>`.
+5. PWA: Chrome on Android → Install app; add `NEXUS_HEALTH_URL` secret for keep-alive.
 
 1. `frontend/` Next.js (App Router) + TypeScript + Tailwind shell.
    - `next.config.js` rewrites `/api/v1/*` to `API_BACKEND_URL`.
