@@ -1,5 +1,6 @@
 """Model exports. Import from `app.models` everywhere else."""
 
+# Re-exports for public API — intentionally unused at module level
 from .common import (  # noqa: F401
     DEFAULT_LIMIT,
     MAX_LIMIT,

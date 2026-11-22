@@ -1,284 +1,407 @@
-# EXTENSION_GUIDE — copy-paste recipes
+# Extension Guide
 
-Four things get extended in NEXUS: extractors, storage backends, export formats and
-workflow modules. Each recipe is self-contained and ends with the check that proves it
-works.
-
-Before you start: read `AGENTS.md` §4 (layering) and §5 (invariants). In particular,
-segments are **1-based** and extraction must never hide a failure.
+Recipes for extending NEXUS with new extractors, storage adapters, export formats,
+or workflow modules. Each recipe is self-contained and references the exact files
+to touch.
 
 ---
 
-## 1. Add an extractor
+## 1. Add a New Extractor (e.g., EPUB / YouTube / RSS)
 
-Example: EPUB (one segment per spine document).
+### Files to add/modify
+- `backend/app/extractors/<name>.py` — new extractor class
+- `backend/app/extractors/__init__.py` — register it
+- `backend/app/services/items.py` — import + wire into `INGEST_PIPELINE`
 
-### Step 1 — the class
-
-Create `backend/app/extractors/epub.py`:
-
+### Base contract (from `backend/app/extractors/base.py`)
 ```python
-"""EPUB books: one segment per spine document."""
+class BaseExtractor(ABC):
+    source_format: str          # e.g. "epub", "youtube", "rss"
+    mime_types: tuple[str, ...] # e.g. ("application/epub+zip",)
 
-from __future__ import annotations
+    @abstractmethod
+    def extract(self, stream: BinaryIO, filename: str) -> ExtractedContent:
+        ...
 
-import zipfile
-from pathlib import Path
-from typing import Any
+    @abstractmethod
+    async def extract_async(self, stream: BinaryIO, filename: str) -> ExtractedContent:
+        ...
+```
 
-from ..models.common import ProcessingStatus, SegmentStatus, SourceFormat
-from ..text import humanize_title
-from .base import BaseExtractor, ExtractionError, ExtractionResult, SegmentDraft
-from .text import decode_text
+`ExtractedContent` fields:
+```python
+@dataclass
+class ExtractedContent:
+    text_by_page: dict[int, str]   # page_number -> text (1-based)
+    metadata: dict[str, Any]       # arbitrary metadata (author, duration, etc.)
+    segments: list[ExtractedSegment]  # optional pre-segmented content
+```
 
+### Step-by-step: EPUB example
+```python
+# backend/app/extractors/epub.py
+from ebooklib import epub
+from bs4 import BeautifulSoup
+from .base import BaseExtractor, ExtractedContent, ExtractedSegment
 
 class EpubExtractor(BaseExtractor):
-    name = "epub"
-    formats = (SourceFormat.text,)          # EPUB enters as a file, see Step 3
+    source_format = "epub"
     mime_types = ("application/epub+zip",)
-    extensions = (".epub",)
 
-    def extract(
-        self,
-        *,
-        data: bytes | None = None,
-        text: str | None = None,
-        filename: str | None = None,
-        mime_type: str | None = None,
-        hints: dict[str, Any] | None = None,
-    ) -> ExtractionResult:
-        if not data:
-            raise ExtractionError("EPUB extraction needs the file bytes")
+    def extract(self, stream: BinaryIO, filename: str) -> ExtractedContent:
+        book = epub.read_epub(stream)
+        text_by_page = {}
+        segments = []
+        page_num = 1
 
-        import io
+        for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+            soup = BeautifulSoup(item.get_content(), "html.parser")
+            text = soup.get_text("\n", strip=True)
+            if text:
+                text_by_page[page_num] = text
+                segments.append(ExtractedSegment(
+                    segment_label=f"Chapter {page_num}",
+                    content=text,
+                    page_number=page_num,
+                ))
+                page_num += 1
 
-        segments: list[SegmentDraft] = []
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            documents = sorted(
-                name for name in archive.namelist()
-                if name.lower().endswith((".xhtml", ".html", ".htm"))
-            )
-            for index, name in enumerate(documents, start=1):   # 1-based, always
-                markup = archive.read(name).decode("utf-8", errors="replace")
-                body = decode_text(None, markup)                # or the HTML stripper
-                segments.append(
-                    SegmentDraft(
-                        segment_index=index,
-                        segment_label=f"Section {index}",
-                        content=body,
-                        extraction_status=(
-                            SegmentStatus.ok if body.strip() else SegmentStatus.empty
-                        ),
-                        metadata={"href": name},
-                    )
-                )
-
-        if not segments:
-            raise ExtractionError("no readable documents inside the EPUB")
-
-        return ExtractionResult(
+        return ExtractedContent(
+            text_by_page=text_by_page,
+            metadata={"chapters": page_num - 1},
             segments=segments,
-            engine="epub-zipfile",
-            title=humanize_title(filename) if filename else None,
-            status=(
-                ProcessingStatus.partial
-                if any(s.extraction_status is SegmentStatus.empty for s in segments)
-                else ProcessingStatus.ready
-            ),
         )
+
+    async def extract_async(self, stream: BinaryIO, filename: str) -> ExtractedContent:
+        # CPU-bound, run in thread pool
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.extract, stream, filename)
 ```
 
-**Rules the class must follow**
-
-- `segment_index` starts at **1** and is contiguous.
-- A page/section that produced no text is `SegmentStatus.empty`, not silently dropped.
-- Only raise `ExtractionError` when the document is unusable as a whole.
-- Set `engine` to a short, stable string; it lands in `items.metadata.engine`.
-- Never call `pymupdf.open` without a `with` block (handles must close immediately).
-
-### Step 2 — register it
-
-`backend/app/extractors/__init__.py`:
-
+Register:
 ```python
+# backend/app/extractors/__init__.py
 from .epub import EpubExtractor
+from .pdf import PdfExtractor
+from .text import TextExtractor
 
-registry.register(EpubExtractor())   # order matters: specific before generic
+EXTRACTORS = [PdfExtractor(), TextExtractor(), EpubExtractor()]
 ```
 
-### Step 3 — make capture accept it
-
-If the format needs a new `source_format`, add it in three places:
-
-1. `backend/app/models/common.py` — `SourceFormat.epub = "epub"`.
-2. `supabase/migrations/00X_epub_format.sql` — extend the CHECK constraint:
-   ```sql
-   alter table items drop constraint if exists items_source_format_check;
-   alter table items add constraint items_source_format_check check (source_format in (
-       'pdf','docx','markdown','text','csv','json','web_article','note','epub'
-   ));
-   ```
-3. `backend/app/formats.py` — `".epub": SourceFormat.epub`.
-
-If the format is a file container whose text cannot be pasted, also add it to
-`FILE_ONLY_FORMATS` in `formats.py`, which makes `ingest_text` reject it with
-`wrong_ingest_channel`.
-
-### Step 4 — prove it
-
-`backend/tests/test_extractors_epub.py`:
-
+Wire into ingest (in `backend/app/services/items.py`):
 ```python
-def test_epub_segments_are_one_based(tmp_epub_bytes):
-    result = EpubExtractor().extract(data=tmp_epub_bytes, filename="book.epub")
-    assert [s.segment_index for s in result.segments] == list(
-        range(1, len(result.segments) + 1)
-    )
-    assert result.engine == "epub-zipfile"
+from app.extractors import EXTRACTORS
+
+def get_extractor(fmt: str) -> BaseExtractor:
+    for ext in EXTRACTORS:
+        if ext.source_format == fmt or fmt in ext.mime_types:
+            return ext
+    raise ValueError(f"No extractor for {fmt}")
 ```
 
-Then:
+### Tests
+- `backend/tests/test_extractors.py` — add test for new extractor using a fixture file
+
+---
+
+## 2. Add a Storage Adapter (e.g., Cloudflare R2 / S3 / Azure Blob)
+
+### Files to add/modify
+- `backend/app/storage/r2.py` — new adapter
+- `backend/app/storage/__init__.py` — export it
+- `backend/app/services/items.py` — use it when `STORAGE_BACKEND=r2`
+
+### Base contract (from `backend/app/storage/base.py`)
+```python
+class StorageBackend(ABC):
+    @abstractmethod
+    def put(self, key: str, data: bytes, content_type: str) -> str:
+        """Store bytes, return the stored key (usually same as input)."""
+        ...
+
+    @abstractmethod
+    def get(self, key: str) -> bytes:
+        """Retrieve bytes; raise FileNotFoundError if missing."""
+        ...
+
+    @abstractmethod
+    def delete(self, key: str) -> None:
+        ...
+
+    @abstractmethod
+    def exists(self, key: str) -> bool:
+        ...
+
+    @abstractmethod
+    def health_check(self) -> dict[str, Any]:
+        """Return dict with 'healthy': bool, 'details': str."""
+        ...
+```
+
+### Step-by-step: Cloudflare R2 example
+```python
+# backend/app/storage/r2.py
+import boto3
+from botocore.config import Config
+from .base import StorageBackend
+
+class R2Storage(StorageBackend):
+    def __init__(self):
+        self.s3 = boto3.client(
+            "s3",
+            endpoint_url=os.environ["R2_ENDPOINT_URL"],
+            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+            config=Config(signature_version="s3v4"),
+        )
+        self.bucket = os.environ["R2_BUCKET"]
+
+    def put(self, key: str, data: bytes, content_type: str) -> str:
+        self.s3.put_object(
+            Bucket=self.bucket, Key=key, Body=data, ContentType=content_type
+        )
+        return key
+
+    def get(self, key: str) -> bytes:
+        resp = self.s3.get_object(Bucket=self.bucket, Key=key)
+        return resp["Body"].read()
+
+    def delete(self, key: str) -> None:
+        self.s3.delete_object(Bucket=self.bucket, Key=key)
+
+    def exists(self, key: str) -> bool:
+        try:
+            self.s3.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except self.s3.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                return False
+            raise
+
+    def health_check(self) -> dict[str, Any]:
+        try:
+            self.s3.head_bucket(Bucket=self.bucket)
+            return {"healthy": True, "details": "R2 reachable"}
+        except Exception as e:
+            return {"healthy": False, "details": str(e)}
+```
+
+Register:
+```python
+# backend/app/storage/__init__.py
+from .local import LocalStorage
+from .supabase import SupabaseStorage
+from .r2 import R2Storage
+
+def get_storage() -> StorageBackend:
+    backend = os.environ.get("STORAGE_BACKEND", "local").lower()
+    if backend == "supabase":
+        return SupabaseStorage()
+    if backend == "r2":
+        return R2Storage()
+    return LocalStorage()
+```
+
+Required env vars (add to Render/`.env`):
+```
+STORAGE_BACKEND=r2
+R2_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=nexus-files
+```
+
+---
+
+## 3. Add an Export Format (e.g., DOCX / Anki / Obsidian)
+
+### Files to add/modify
+- `backend/app/export/<name>.py` — new exporter
+- `backend/app/export/__init__.py` — register it
+- `backend/app/routes/items.py` — add to format switch
+
+### Base contract
+```python
+class BaseExporter(ABC):
+    format_name: str          # e.g. "docx", "anki", "obsidian"
+    content_type: str         # e.g. "application/vnd.openxmlformats..."
+    extension: str            # e.g. ".docx"
+
+    @abstractmethod
+    def export(self, item: Item, segments: list[Segment], **kwargs) -> bytes:
+        ...
+```
+
+### Step-by-step: Anki deck example
+```python
+# backend/app/export/anki.py
+import genanki
+from .base import BaseExporter
+
+class AnkiExporter(BaseExporter):
+    format_name = "anki"
+    content_type = "application/octet-stream"
+    extension = ".apkg"
+
+    def export(self, item: Item, segments: list[Segment], **kwargs) -> bytes:
+        model = genanki.Model(
+            1607392319, "NEXUS Card",
+            fields=[{"name": "Question"}, {"name": "Answer"}],
+            templates=[{
+                "name": "Card 1",
+                "qfmt": "{{Question}}",
+                "afmt": "{{FrontSide}}<hr id='answer'>{{Answer}}",
+            }],
+        )
+        deck = genanki.Deck(2059400110, f"NEXUS: {item.title}")
+        for seg in segments:
+            # Create Q/A cards from segments
+            note = genanki.Note(model=model, fields=[
+                f"Segment: {seg.segment_label}",
+                seg.content[:5000],  # truncate for Anki
+            ])
+            deck.add_note(note)
+
+        pkg = genanki.Package(deck)
+        buf = io.BytesIO()
+        pkg.write_to_file(buf)
+        return buf.getvalue()
+```
+
+Register:
+```python
+# backend/app/export/__init__.py
+from .markdown import MarkdownExporter
+from .json import JsonExporter
+from .pdf import PdfExporter
+from .anki import AnkiExporter
+
+EXPORTERS = {
+    "markdown": MarkdownExporter(),
+    "json": JsonExporter(),
+    "pdf": PdfExporter(),
+    "anki": AnkiExporter(),
+}
+
+def get_exporter(fmt: str) -> BaseExporter:
+    try:
+        return EXPORTERS[fmt.lower()]
+    except KeyError:
+        raise ValueError(f"Unknown export format: {fmt}")
+```
+
+Route handler (in `backend/app/routes/items.py`):
+```python
+@router.get("/{item_id}/export")
+async def export_item(item_id: str, format: str = "markdown", ...):
+    exporter = get_exporter(format)
+    data = exporter.export(item, segments)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=exporter.content_type,
+        headers={"Content-Disposition": f'attachment; filename="{item.id}{exporter.extension}"'}
+    )
+```
+
+---
+
+## 4. Add a Workflow Module (e.g., Daily Notes / Weekly Review)
+
+### Architecture
+Workflow modules are self-contained feature verticals that:
+1. Define their own API routes under `/api/v1/workflows/<name>/`
+2. Use existing services (items, search, collections) — no new tables unless necessary
+3. Register in `backend/app/workflows/__init__.py`
+
+### Files to add
+- `backend/app/workflows/<name>/routes.py`
+- `backend/app/workflows/<name>/service.py` (optional)
+- `backend/app/workflows/__init__.py` — register router
+
+### Step-by-step: Daily Notes example
+```python
+# backend/app/workflows/daily_notes/routes.py
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from datetime import date
+from app.auth import require_access
+from app.services.items import create_item
+
+router = APIRouter(prefix="/daily-notes", tags=["daily-notes"])
+
+class DailyNoteIn(BaseModel):
+    content: str
+    note_date: date | None = None
+
+@router.post("")
+async def create_daily_note(
+    payload: DailyNoteIn,
+    auth=Depends(require_access),
+):
+    note_date = payload.note_date or date.today()
+    item = await create_item(
+        workspace_id=auth.workspace_id,
+        source_format="markdown",
+        title=f"Daily Note — {note_date.isoformat()}",
+        content=payload.content,
+        blueprint_id="note",  # assumes a "note" blueprint exists
+    )
+    return {"item_id": item.id, "date": note_date.isoformat()}
+
+@router.get("/{date_str}")
+async def get_daily_note(date_str: str, auth=Depends(require_access)):
+    # Search for item with title matching date
+    ...
+```
+
+Register:
+```python
+# backend/app/workflows/__init__.py
+from fastapi import APIRouter
+from .daily_notes import router as daily_notes_router
+
+workflow_router = APIRouter(prefix="/workflows", tags=["workflows"])
+workflow_router.include_router(daily_notes_router)
+```
+
+Include in main app (`backend/app/main.py`):
+```python
+from app.workflows import workflow_router
+app.include_router(workflow_router, prefix="/api/v1")
+```
+
+### Frontend integration
+- Add page at `frontend/src/app/workflows/daily-notes/page.tsx`
+- Use `useApi` hook to call `/api/v1/workflows/daily-notes/`
+
+---
+
+## 5. Key Invariants (never break these)
+
+| Invariant | Where enforced |
+|---|---|
+| `item_segments.search_vector` is **generated**, never manually updated | DB schema (trigger) |
+| SHA-256 dedup is per-workspace, unique | `items.sha256` unique index + `insert_item` |
+| Passcode gate is **one dependency** (`require_access`) | `backend/app/auth.py` |
+| Storage abstraction: only `put/get/delete/exists/health_check` | `backend/app/storage/base.py` |
+| Extractors return `ExtractedContent` with `text_by_page` (1-based) | `backend/app/extractors/base.py` |
+| Export formats are pure functions: `Item + Segments -> bytes` | `backend/app/export/base.py` |
+| Frontend rewrites `/api/*` to backend — no CORS | `frontend/next.config.mjs` |
+
+---
+
+## 6. Testing new extensions
 
 ```bash
-cd backend && python3 -m pytest && python3 -m pyflakes app tests
+# Backend
+cd nexus/backend
+python3 -m pytest tests/ -k "extractor or storage or export" -v
+
+# Frontend (if UI added)
+cd nexus/frontend
+npm run typecheck
+npm run build
 ```
 
----
-
-## 2. Add a storage backend
-
-Example: an S3-compatible bucket.
-
-Create `backend/app/storage/s3.py`:
-
-```python
-from ..storage.base import BaseStorage, StorageError, StoredObject, sanitize_key
-
-SCHEME = "s3"
-
-
-class S3Storage(BaseStorage):
-    name = "s3"
-
-    def __init__(self, endpoint: str, bucket: str, key_id: str, secret: str) -> None:
-        self.endpoint, self.bucket = endpoint.rstrip("/"), sanitize_key(bucket)
-        self._auth = (key_id, secret)
-
-    def put(self, key: str, data: bytes, content_type: str | None = None) -> StoredObject:
-        key = sanitize_key(key)
-        # ...PUT self.endpoint/self.bucket/key...
-        return StoredObject(uri=f"{SCHEME}://{self.bucket}/{key}", key=key,
-                            size=len(data), content_type=content_type)
-
-    def get(self, uri: str) -> bytes: ...
-    def delete(self, uri: str) -> bool: ...
-    def exists(self, uri: str) -> bool: ...
-    def url_for(self, uri: str, *, expires_in: int = 3600) -> str | None: ...
-```
-
-Register it in `backend/app/storage/__init__.py::build_storage` and widen the validator
-in `backend/app/config.py`:
-
-```python
-@field_validator("storage_backend")
-@classmethod
-def _known_backend(cls, value: str) -> str:
-    allowed = {"local", "supabase", "s3"}
-```
-
-Add the new env vars to `.env.example`, and extend `Settings.warnings()` when the chosen
-backend is missing its credentials.
-
-**Tests** (`tests/test_storage.py`): round-trip put/get/exists/delete, traversal rejection
-(`../`), wrong-scheme rejection, and `health()` returning `ok: False` when unreachable.
-
----
-
-## 3. Add an export format
-
-Example: CSL-JSON (Zotero import).
-
-1. `backend/app/models/common.py` — add to `ExportFormat`: `csl_json = "csl-json"`.
-2. `backend/app/services/export.py` — add a renderer:
-
-```python
-def render_csl_json(item: dict, segments: list[dict]) -> str:
-    payload = {
-        "id": str(item["id"]),
-        "type": "document",
-        "title": item["title"],
-        "abstract": item.get("summary") or "",
-        "note": item.get("source_uri") or "",
-        "issued": {"date-parts": [[item["created_at"].year]]},
-    }
-    return json.dumps(payload, indent=2, ensure_ascii=False)
-```
-
-3. Register it in the same module's `RENDERERS` dict:
-
-```python
-RENDERERS = {
-    "markdown": render_markdown,
-    "json": render_json,
-    "bibtex": render_bibtex,
-    "apa": render_apa,
-    "mla": render_mla,
-    "csl-json": render_csl_json,
-}
-```
-
-4. The existing route picks it up with no change:
-   `GET /api/v1/items/{id}/export/{fmt}`.
-
-**Tests**: assert the output parses back (JSON), that Markdown starts with `---\n` and
-contains `title:` exactly once, and that an item with no author still renders (no
-`None` leaks into the file).
-
----
-
-## 4. Add a workflow module
-
-Example: a "reading queue" module.
-
-A workflow module is a **service + router pair** with no new concepts:
-
-1. `backend/app/repositories/queue.py` — SQL only, returns dicts.
-2. `backend/app/services/queue.py` — rules; raise `ApiError` via `errors.py` helpers.
-3. `backend/app/api/queue.py`:
-
-```python
-router = APIRouter(tags=["queue"], dependencies=[Depends(require_access)])
-
-
-@router.get("/queue", response_model=Page[Item], summary="Items queued for reading")
-def read_queue(
-    limit: int = Query(default=50),
-    offset: int = Query(default=0),
-    cur: psycopg.Cursor = Depends(get_cursor),
-) -> Page[Item]:
-    return queue_service.list_queue(cur, clamp_limit(limit), clamp_offset(offset))
-```
-
-4. Mount it in `backend/app/api/__init__.py`:
-
-```python
-from . import catalog, ingest, items, queue, studio, system
-api_router.include_router(queue.router)
-```
-
-**Mounting gotcha:** every router except `system` must declare
-`dependencies=[Depends(require_access)]`, or the endpoint will be public. Tests in
-`test_auth_gate.py` will catch a missing guard only for endpoints they call, so add one
-test per new public-looking route.
-
----
-
-## Checklist before you commit
-
-- [ ] `cd backend && python3 -m pytest` — all green
-- [ ] `python3 -m pyflakes backend/app backend/tests scripts` — no output
-- [ ] No file exceeds ~300 lines
-- [ ] New migration is numbered and idempotent (`create table if not exists`, `on conflict do nothing`)
-- [ ] New env var documented in `.env.example` and `Settings`
-- [ ] `docs/PROJECT_STATE.md` updated (what changed, test output, next step)
-- [ ] If a design changed: new ADR appended to `docs/DECISIONS.md`
+Add integration tests to `scripts/smoke_test.py` if the extension affects the
+ingest/search/export flow.

@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: nexus-backend
+    plan: free
+    region: oregon # or frankfurt, singapore
+    rootDir: backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    # Required env vars — set these in Render dashboard after first deploy
+    # (sync: false means they won't be synced from this file to the service)
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: NEXUS_ACCESS_KEY
+        sync: false
+      - key: STORAGE_BACKEND
+        value: supabase
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        sync: false
+      - key: MAX_UPLOAD_MB
+        value: "25"
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+        sync: false
+      - key: PYTHONUNBUFFERED
+        value: "1"

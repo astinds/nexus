@@ -7,8 +7,8 @@ links, export it losslessly.
 Runs entirely on free tiers: **Vercel Hobby** (frontend) + **Render Free** (API) +
 **Supabase Free** (Postgres + Storage). $0/month.
 
-> Status: **Stage 3 of 6 complete** — backend core, schema, passcode gate, ingest.
-> Extractors beyond text, search and export land in Stage 4; the frontend in Stage 5.
+> Status: **Stage 6 of 6 complete** — self-verifying smoke test, CI, Render config,
+> deployment docs.
 > See [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) for the exact current state.
 
 ---
@@ -20,7 +20,7 @@ Runs entirely on free tiers: **Vercel Hobby** (frontend) + **Render Free** (API)
 | API | FastAPI, Pydantic v2, psycopg3 | `backend/` |
 | Database | PostgreSQL 15+ (Supabase) with `tsvector` + JSONB | `supabase/migrations/` |
 | Storage | `LocalStorage` or `SupabaseStorage` (private bucket) | `backend/app/storage/` |
-| Frontend | Next.js App Router + TypeScript + Tailwind (Stage 5) | `frontend/` |
+| Frontend | Next.js App Router + TypeScript + Tailwind | `frontend/` |
 
 ---
 
@@ -43,8 +43,8 @@ cd backend && uvicorn app.main:app --reload --port 8000
 # -> http://127.0.0.1:8000/docs
 
 # 5. Test
-cd backend && python3 -m pytest          # 81 passed
-python3 -m pyflakes app tests             # no output
+cd backend && python3 -m pytest          # 132 passed
+python3 -m pyflakes app tests ../scripts # no output
 ```
 
 On Android/Termux add `--extra-index-url https://termux-user-repository.github.io/pypi/`
@@ -52,74 +52,111 @@ and `pkg install python-pymupdf libpq`. `--only-binary=:all:` is required there.
 
 ---
 
-## Deploy free (three services, no card)
+## $0 Deployment Guide (copy-paste ready)
 
-### 1. Supabase (database + storage)
+### 1. Supabase Free — Database + Storage
 
-1. Create a project (free tier: 500 MB DB, 1 GB storage).
-2. **SQL Editor** → paste `supabase/migrations/001_initial_schema.sql`, then `002`, then
-   `003`, or run `DATABASE_URL=... python scripts/apply_migrations.py` locally.
-3. **Storage** → new **private** bucket named `nexus-files`.
-4. **Project Settings → Database → Connection string → URI** — that is `DATABASE_URL`.
+1. Create a project at [supabase.com](https://supabase.com) (Free tier: 500 MB DB, 1 GB storage).
+2. **SQL Editor** → run migrations in order:
+   - `supabase/migrations/001_initial_schema.sql`
+   - `supabase/migrations/002_updated_at_triggers.sql`
+   - `supabase/migrations/003_collection_tree.sql`
+   Or run locally: `DATABASE_URL=... python scripts/apply_migrations.py`
+3. **Storage** → create a **private** bucket named `nexus-files`.
+4. **Project Settings → Database → Connection string → URI** — copy this as `DATABASE_URL`.
    Prefer the **pooler** host (port 6543) for Render.
 
-> Supabase Free has **no automatic backups**. Settings → "Backup library" (Stage 5)
-> exports everything as a ZIP; run it monthly.
+> Supabase Free has **no automatic backups**. The Settings page (Stage 5B) exports
+> everything as a ZIP; run it monthly.
 
-### 2. Render (API)
+### 2. Render Free — API Backend
 
-1. New → **Web Service** → connect the repo.
-2. Root directory `backend`, build `pip install -r ../requirements.txt`,
-   start `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
-3. Environment:
-   `DATABASE_URL`, `NEXUS_ACCESS_KEY` (long random string), `STORAGE_BACKEND=supabase`,
-   `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_BUCKET=nexus-files`,
-   `COOKIE_SECURE=true`, `MAX_UPLOAD_MB=25`.
-4. Health check path: `/health`.
+1. New → **Web Service** → connect this repo.
+2. Root directory: `backend`
+3. Build command: `pip install -r requirements.txt`
+4. Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+5. **Environment variables** (set in Render dashboard, *not* in this file):
 
-Render Free sleeps after 15 minutes of inactivity; the first request after that takes
-about 30 seconds. The frontend shows a "Waking up NEXUS…" state instead of an error.
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | From Supabase step 1 (pooler URI) |
+| `NEXUS_ACCESS_KEY` | Long random string (e.g. `openssl rand -hex 32`) |
+| `STORAGE_BACKEND` | `supabase` |
+| `SUPABASE_URL` | `https://<project>.supabase.co` |
+| `SUPABASE_SERVICE_KEY` | Supabase **service_role** key (Settings → API) |
+| `SUPABASE_BUCKET` | `nexus-files` |
+| `MAX_UPLOAD_MB` | `25` |
+| `COOKIE_SECURE` | `true` |
+| `PYTHONUNBUFFERED` | `1` |
 
-### 3. Vercel (frontend, Stage 5)
+6. **Health check path**: `/api/v1/health`
 
-1. New Project → root directory `frontend`.
-2. Environment: `API_BACKEND_URL=https://<your-service>.onrender.com`.
-3. Deploy. `/api/v1/*` is rewritten to the API server-side, so there are no CORS
-   preflights and cookies stay same-origin.
+> Render Free sleeps after 15 min of inactivity; first request takes ~30 s.
+> The frontend shows "Waking up NEXUS…" instead of an error.
 
-### Optional: keep Render awake
+### 3. Vercel Hobby — Frontend
 
-`.github/workflows/keep-alive.yml`:
+1. New Project → import repo → **Root Directory**: `frontend`
+2. **Environment variable**:
 
-```yaml
-name: keep-alive
-on:
-  schedule:
-    - cron: "*/10 * * * *"
-  workflow_dispatch:
-jobs:
-  ping:
-    runs-on: ubuntu-latest
-    steps:
-      - run: curl -fsS --max-time 25 "${{ secrets.NEXUS_HEALTH_URL }}" || true
+| Variable | Value |
+|---|---|
+| `API_BACKEND_URL` | `https://<your-render-service>.onrender.com` |
+
+3. Deploy.
+
+> `/api/v1/*` is rewritten to the API server-side — no CORS, cookies stay same-origin.
+
+### 4. Live Proof (Smoke Test)
+
+```bash
+python3 scripts/smoke_test.py \
+  --base-url https://<your-render-service>.onrender.com \
+  --access-key <your-NEXUS_ACCESS_KEY>
 ```
 
-`NEXUS_HEALTH_URL` = `https://<service>.onrender.com/health`. GitHub Actions is free for
-public repos and 2,000 minutes/month for private ones; this job uses about 1 minute per
-day. Note that Render's monthly free hours (750) are shared across services — a
-keep-alive spends them faster, so use it only if cold starts bother you.
+Expected output:
+```
+🚀 Starting smoke test against https://...
+✅ Health OK: {...}
+✅ Authenticated via session cookie
+📄 Generated 2-page PDF (XXXXX bytes), phrase: NEXUS-SMOKE-XXXXXXXX
+✅ Ingested item: <uuid>
+✅ Page 1 extracted phrase: NEXUS-SMOKE-XXXXXXXX...
+✅ Page 2 flagged is_scanned=True (no text, vector only)
+✅ Search hit: item=<uuid>, segment=Page 1
+✅ Export OK: frontmatter + body (XXXXX chars)
+✅ Deleted item: <uuid>
+🎉 ALL SMOKE TESTS PASSED
+```
+
+### 5. Android PWA — Install & Share
+
+1. Open the Vercel URL in Chrome on Android.
+2. Menu → **Install app** → "NEXUS" appears on home screen.
+3. In any app (browser, file manager), **Share** → select **NEXUS** → the capture page opens
+   with the shared text/URL/file pre-filled.
+
+---
+
+## Optional: Keep Render Awake (prevents cold starts)
+
+The free tier sleeps after 15 min. To keep it warm, add the GitHub secret
+`NEXUS_HEALTH_URL=https://<your-render>.onrender.com/api/v1/health`
+and `.github/workflows/keep-alive.yml` will ping it every 5 days (free on GitHub Actions).
+
+> Note: Render's 750 free hours/month are shared across services. A keep-alive spends
+> them faster — only enable if cold starts bother you.
 
 ---
 
 ## Security model
 
-Single user, one shared passcode (`NEXUS_ACCESS_KEY`). When it is set, every data route
-needs either `X-Nexus-Key: <passcode>` or the HttpOnly `nexus_session` cookie from
-`POST /api/v1/auth/session`. When it is unset the API runs open and `/api/v1/health`
-says so loudly.
-
-`SUPABASE_SERVICE_KEY` bypasses row-level security: it belongs only in Render's
-environment, never in the frontend or a commit.
+- Single user, one shared passcode (`NEXUS_ACCESS_KEY`).
+- When set: every data route needs `X-Nexus-Key: <passcode>` or the HttpOnly
+  `nexus_session` cookie from `POST /api/v1/auth/session`.
+- When unset: API runs open and `/api/v1/health` says so loudly.
+- `SUPABASE_SERVICE_KEY` bypasses RLS: only in Render env, never in frontend or commits.
 
 ---
 

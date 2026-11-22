@@ -1,0 +1,30 @@
+name: Keep Supabase Alive (optional)
+
+# Pings a health endpoint on a schedule to prevent Supabase Free tier
+# from pausing the project after 7 days of inactivity.
+#
+# Requires: Repository secret NEXUS_HEALTH_URL (e.g. https://your-app.onrender.com/api/v1/health)
+# Skips cleanly if the secret is not set.
+
+on:
+  schedule:
+    # Every 5 days at 03:00 UTC — well within the 7-day idle window
+    - cron: "0 3 */5 * *"
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  keep-alive:
+    name: Ping health endpoint
+    runs-on: ubuntu-latest
+    if: ${{ secrets.NEXUS_HEALTH_URL != '' }}
+    steps:
+      - name: Ping health
+        run: |
+          echo "Pinging ${{ secrets.NEXUS_HEALTH_URL }}..."
+          curl -fsS --max-time 10 "${{ secrets.NEXUS_HEALTH_URL }}" | jq .
+        env:
+          # In case the health endpoint requires auth
+          NEXUS_ACCESS_KEY: ${{ secrets.NEXUS_ACCESS_KEY }}

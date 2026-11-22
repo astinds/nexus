@@ -4,6 +4,10 @@ NEXUS v1.0 is a zero-cost personal information and document intelligence platfor
 This file is the entry point for **any** engineer or AI model continuing the work.
 It is written to be sufficient on its own: no chat history required.
 
+> **Status: Stage 6 of 6 complete** — self-verifying smoke test, CI, Render config,
+> deployment docs.
+> Commit: `94d4f1c` (Stage 5B+ARM64 unlock); Stage 6 commit to follow.
+
 ---
 
 ## 1. What NEXUS is
@@ -74,7 +78,7 @@ Run everything from `backend/` unless stated.
 
 ```bash
 # ---------- tests (no database needed) ----------
-cd backend && python3 -m pytest              # 81 passed at Stage 3
+cd backend && python3 -m pytest              # 132 passed at Stage 6
 
 # ---------- lint ----------
 python3 -m pyflakes app tests ../scripts     # must print nothing
@@ -87,6 +91,13 @@ cd backend && uvicorn app.main:app --reload --port 8000
 python scripts/apply_migrations.py --dry-run                  # list files
 DATABASE_URL=postgresql://... python scripts/apply_migrations.py
 DATABASE_URL=postgresql://... python scripts/apply_migrations.py --verify
+
+# ---------- smoke test (E2E, requires running API) ----------
+# Local:
+python3 scripts/smoke_test.py --base-url http://127.0.0.1:8000
+# Deployed (with passcode):
+python3 scripts/smoke_test.py --base-url https://<your-render>.onrender.com \
+    --access-key <NEXUS_ACCESS_KEY>
 
 # ---------- install deps on Android/Termux ----------
 pip install --only-binary=:all: \
