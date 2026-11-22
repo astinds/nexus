@@ -3,11 +3,11 @@
 Update this file at the end of **every** stage. A future model must be able to resume
 from this page alone.
 
-Last updated: Stage 6.1 complete (pre-deploy patch applied; pytest 135 passed, pyflakes clean, commits `31216b0` + `0869d46`).
+Last updated: Stage 6.1 complete (pre-deploy patch applied; pytest 136 passed, pyflakes clean).
 Stage 5A commit: `a51ed8a`
 Stage 5B commit: `94d4f1c`
 Stage 6 commit: `31216b0`
-Stage 6.1 commit: `0869d46`
+Stage 6.1 commit: `4285204`
 
 ---
 

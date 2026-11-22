@@ -5,7 +5,8 @@ Fast unit test for the PDF generator helper in scripts/smoke_test.py.
 Verifies the generator works offline without a live server:
 - Creates a 2-page PDF in memory
 - Page 1 contains the phrase
-- Page 2 has no text (empty content stream)
+- Page 2 has vector content but no text (is_scanned=True)
+- PdfExtractor classifies Page 1 as `ok` and Page 2 as `is_scanned=True`
 """
 
 import io
@@ -21,6 +22,10 @@ except ImportError:
 # Import the smoke_test module
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 from smoke_test import generate_test_pdf
+
+# Import the PdfExtractor from the backend app
+from app.extractors.pdf import PdfExtractor  # noqa: E402
+from app.models.common import SegmentStatus  # noqa: E402
 
 
 def test_generate_test_pdf_creates_two_pages() -> None:
@@ -49,7 +54,7 @@ def test_generate_test_pdf_page1_has_phrase() -> None:
 
 
 def test_generate_test_pdf_page2_no_text() -> None:
-    """Page 2 is empty (no extractable text)."""
+    """Page 2 has vector content but no extractable text."""
     phrase = "SHOULD-NOT-APPEAR"
     pdf_bytes = generate_test_pdf(phrase)
 
@@ -61,3 +66,29 @@ def test_generate_test_pdf_page2_no_text() -> None:
     assert "Page 2" not in page2_text
     # Should be essentially empty or just whitespace
     assert page2_text.strip() == ""
+
+
+def test_pdf_extractor_classifies_pages() -> None:
+    """PdfExtractor must classify Page 1 as `ok` and Page 2 as `is_scanned=True`."""
+    phrase = "EXTRACTOR-TEST-PHRASE"
+    pdf_bytes = generate_test_pdf(phrase)
+
+    extractor = PdfExtractor()
+    result = extractor.extract(data=pdf_bytes)
+
+    # Must produce exactly 2 segments
+    assert len(result.segments) == 2
+
+    page1, page2 = result.segments
+
+    # Page 1: text present → status ok, is_scanned=False
+    assert page1.segment_label == "Page 1"
+    assert page1.extraction_status == SegmentStatus.ok
+    assert page1.is_scanned is False
+    assert phrase in page1.content
+
+    # Page 2: no text but vector drawing → status scanned, is_scanned=True
+    assert page2.segment_label == "Page 2"
+    assert page2.extraction_status == SegmentStatus.scanned
+    assert page2.is_scanned is True
+    assert page2.content == ""

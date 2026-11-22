@@ -46,7 +46,7 @@ class TestItem:
 # Minimal pure-Python PDF generator (no reportlab)
 # Produces a valid 2-page PDF:
 #   Page 1: contains the search phrase as extractable text
-#   Page 2: empty page (no text) — will be flagged is_scanned by extractor
+#   Page 2: vector drawing only (no text) — will be flagged is_scanned by extractor
 # ──────────────────────────────────────────────────────────────────────
 
 _PDF_HEADER = b"%PDF-1.4\n"
@@ -82,9 +82,14 @@ def _make_content_stream(text: str) -> bytes:
     return ops.encode()
 
 
-def _make_empty_content_stream() -> bytes:
-    """Empty content stream for page 2 (no text)."""
-    return b""
+def _make_vector_content_stream() -> bytes:
+    """Content stream with a vector drawing (non-text, visible shape).
+
+    PyMuPDF/pypdf/NEXUS PdfExtractor classify a page with no text but real
+    drawing operators as `is_scanned=True` (a scanned/vector-only page), while a
+    blank content stream with no operators is `empty`.
+    """
+    return b"0 0 100 100 re f\n"
 
 
 def generate_test_pdf(phrase: str) -> bytes:
@@ -92,7 +97,7 @@ def generate_test_pdf(phrase: str) -> bytes:
     Generate a 2-page PDF using pure Python.
 
     Page 1: Contains the search phrase as extractable text.
-    Page 2: Empty page (no text content) — will be flagged is_scanned by extractor.
+    Page 2: Vector drawing only (no text) — flagged is_scanned by the extractor.
     """
     # Object numbering:
     # 1: Catalog
@@ -137,7 +142,7 @@ def generate_test_pdf(phrase: str) -> bytes:
     )
 
     # 6: Page 2
-    stream7_data = _make_empty_content_stream()
+    stream7_data = _make_vector_content_stream()
     stream7_dict = f"<< /Length {len(stream7_data)} >>".encode()
     objects.append(
         _pdf_stream(
