@@ -4,9 +4,8 @@ NEXUS v1.0 is a zero-cost personal information and document intelligence platfor
 This file is the entry point for **any** engineer or AI model continuing the work.
 It is written to be sufficient on its own: no chat history required.
 
-> **Status: Stage 6 of 6 complete** — self-verifying smoke test, CI, Render config,
-> deployment docs.
-> Commits: `94d4f1c` (Stage 5B+ARM64 unlock), `31216b0` (Stage 6)
+> **Status: Stage 6.1 complete** — pre-deploy patch applied; pytest 135 passed, pyflakes clean; commits `94d4f1c`, `31216b0`, `0869d46`.
+> Next: user pushes to GitHub and deploys to Render/Vercel/Supabase.
 
 ---
 
