@@ -4,7 +4,7 @@ name: Keep Supabase Alive (optional)
 # from pausing the project after 7 days of inactivity.
 #
 # Requires: Repository secret NEXUS_HEALTH_URL (e.g. https://your-app.onrender.com/api/v1/health)
-# Skips cleanly if the secret is not set.
+# Skips cleanly (exit 0) if the secret is not set.
 
 on:
   schedule:
@@ -19,12 +19,26 @@ jobs:
   keep-alive:
     name: Ping health endpoint
     runs-on: ubuntu-latest
-    if: ${{ secrets.NEXUS_HEALTH_URL != '' }}
     steps:
-      - name: Ping health
-        run: |
-          echo "Pinging ${{ secrets.NEXUS_HEALTH_URL }}..."
-          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 10 "${{ secrets.NEXUS_HEALTH_URL }}" | jq .
+      - name: Check secret is configured
+        id: check
         env:
-          # In case the health endpoint requires auth
+          HEALTH_URL: ${{ secrets.NEXUS_HEALTH_URL }}
+        run: |
+          if [ -z "$HEALTH_URL" ]; then
+            echo "NEXUS_HEALTH_URL is not set — skipping keep-alive."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ping health
+        if: steps.check.outputs.configured == 'true'
+        env:
+          HEALTH_URL: ${{ secrets.NEXUS_HEALTH_URL }}
           NEXUS_ACCESS_KEY: ${{ secrets.NEXUS_ACCESS_KEY }}
+        run: |
+          echo "Pinging ${HEALTH_URL}..."
+          curl --fail --silent --show-error \
+            --max-time 90 --retry 2 --retry-delay 10 \
+            "${HEALTH_URL}" | jq .
