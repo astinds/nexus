@@ -23,6 +23,9 @@ from .base import BaseExtractor, ExtractionError, ExtractionResult, SegmentDraft
 
 MAX_PAGES = 2000  # a 2 000-page PDF already needs a deliberate decision
 MAX_CHARS_PER_PAGE = 40000
+# 2 000 pages x 40 000 chars would be ~80 MB of Python str in RAM before it ever
+# reaches PostgreSQL; 4 M characters is still ~2000 book pages of prose.
+MAX_TOTAL_CHARS = 4_000_000
 
 # PDF comments run to end of line; everything else that is whitespace carries no
 # drawing instruction, so both can be ignored when deciding "is this page empty?".
@@ -92,11 +95,46 @@ class PdfExtractor(BaseExtractor):
                 continue
             if result.segments:
                 result.title = humanize_title(filename) if filename else result.title
-                return result
+                return self._apply_text_budget(result)
             attempts.append((engine_name, "no pages produced"))
 
+        reasons = [why for _, why in attempts]
+        if any("password-protected" in reason for reason in reasons):
+            raise ExtractionError(
+                "PDF is password-protected: remove the password and upload again."
+            )
         detail = "; ".join(f"{name}: {why}" for name, why in attempts)
         raise ExtractionError(f"no PDF engine could read this document ({detail})")
+
+    @staticmethod
+    def _apply_text_budget(result: ExtractionResult) -> ExtractionResult:
+        """Cap total extracted text so one hostile PDF cannot exhaust 512 MB.
+
+        Per-page truncation already exists; this bounds the sum. Later pages keep
+        their numbering but carry no content, and the item is marked partial with a
+        warning, so nothing silently pretends to be complete.
+        """
+        used = 0
+        dropped: list[int] = []
+        for segment in result.segments:
+            if used >= MAX_TOTAL_CHARS:
+                segment.content = ""
+                segment.is_scanned = False
+                segment.metadata = {**segment.metadata, "truncated": True}
+                dropped.append(segment.segment_index)
+                continue
+            remaining = MAX_TOTAL_CHARS - used
+            if len(segment.content) > remaining:
+                segment.content = segment.content[:remaining]
+                segment.metadata = {**segment.metadata, "truncated": True}
+            used += len(segment.content)
+
+        if dropped:
+            result.warnings.append(
+                f"Document text exceeded {MAX_TOTAL_CHARS:,} characters; "
+                f"pages {dropped[0]}-{dropped[-1]} were not indexed."
+            )
+        return result
 
     # ------------------------------------------------------------------ engines
     def _with_pymupdf(self, data: bytes) -> ExtractionResult:
@@ -105,6 +143,12 @@ class PdfExtractor(BaseExtractor):
         segments: list[SegmentDraft] = []
         warnings: list[str] = []
         with pymupdf.open(stream=data, filetype="pdf") as document:  # closes immediately
+            # PyMuPDF opens an encrypted file without raising and then fails on the
+            # first page access. Say so plainly instead of returning failed pages.
+            if document.needs_pass:
+                raise ExtractionError(
+                    "PDF is password-protected: remove the password and upload again."
+                )
             page_count = document.page_count
             if page_count > MAX_PAGES:
                 warnings.append(
@@ -154,10 +198,16 @@ class PdfExtractor(BaseExtractor):
         warnings: list[str] = []
         reader = PdfReader(io.BytesIO(data))
         if reader.is_encrypted:
+            # decrypt("") succeeds only for PDFs with an empty owner password; any
+            # real password means "unreadable" and must read as such.
             try:
-                reader.decrypt("")
-            except Exception as exc:
-                raise ExtractionError(f"PDF is encrypted and cannot be opened: {exc}")
+                opened = reader.decrypt("")
+            except Exception:
+                opened = 0
+            if not opened:
+                raise ExtractionError(
+                    "PDF is password-protected: remove the password and upload again."
+                )
 
         pages = reader.pages
         if len(pages) > MAX_PAGES:

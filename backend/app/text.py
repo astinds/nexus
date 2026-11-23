@@ -137,6 +137,34 @@ def truncate(text: str, limit: int = 300) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "\u2026"
 
 
+# PostgreSQL text columns cannot store U+0000: psycopg raises
+# `ValueError: A string literal cannot contain NUL (0x00) characters` before the
+# INSERT even reaches the server, which surfaced as a 500 on malformed PDFs whose
+# embedded fonts yield NUL bytes. Other C0 controls survive in jsonb but make
+# exports and the search index unreadable, so they go too — tabs and newlines stay.
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def sanitize_text(value: str | None) -> str:
+    """Strip NUL and other C0 control characters; keep \\t, \\n and \\r."""
+    if not value:
+        return ""
+    if "\x00" in value or _CONTROL_RE.search(value):
+        return _CONTROL_RE.sub("", value)
+    return value
+
+
+def sanitize_tree(value: object) -> object:
+    """Recursively clean strings inside JSON-bound structures (dict/list/scalar)."""
+    if isinstance(value, str):
+        return sanitize_text(value)
+    if isinstance(value, dict):
+        return {sanitize_text(str(k)): sanitize_tree(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [sanitize_tree(item) for item in value]
+    return value
+
+
 def unique_in_order(values: Iterable[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []

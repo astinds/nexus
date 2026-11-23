@@ -53,14 +53,21 @@ export function useWake() {
   const [busy, setBusy] = useState(false);
   const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelled = useRef(false);
+  // Generation counter: a retry() while a probe loop is still waiting starts a new
+  // generation, and the old loop exits at its next check. Without this, tapping
+  // Retry during a cold start could leave two 60 s /health probes in flight.
+  const runId = useRef(0);
 
   const check = useCallback(async () => {
+    const mine = ++runId.current;
     cancelled.current = false;
+    const stillCurrent = () => runId.current === mine && !cancelled.current;
     setBusy(true);
     setState((prev) => (prev.status === 'ok' ? prev : { ...prev, status: 'loading' }));
 
     if (bannerTimer.current) clearTimeout(bannerTimer.current);
     bannerTimer.current = setTimeout(() => {
+      if (!stillCurrent()) return;
       setState((prev) =>
         prev.status === 'loading' ? { ...prev, status: 'waking' } : prev,
       );
@@ -69,10 +76,13 @@ export function useWake() {
     const startedAt = Date.now();
     let lastError: unknown = null;
 
-    while (!cancelled.current) {
+    // Strictly sequential: each probe is awaited before the next begins.
+    while (stillCurrent()) {
       try {
         const health = await getHealth(); // 60 s budget, one retry inside api.ts
+        if (!stillCurrent()) return;
         const session = await getSession();
+        if (!stillCurrent()) return;
         setState({
           status: health.status === 'ok' ? 'ok' : 'degraded',
           session,
@@ -83,6 +93,7 @@ export function useWake() {
         setDismissed(false);
         break;
       } catch (error) {
+        if (!stillCurrent()) return;
         lastError = error;
         // Inside the wake window this is expected; keep waiting calmly.
         if (Date.now() - startedAt >= WAKE_WINDOW_MS) {
@@ -105,13 +116,14 @@ export function useWake() {
       bannerTimer.current = null;
     }
     void lastError;
-    setBusy(false);
+    if (runId.current === mine) setBusy(false);
   }, []);
 
   useEffect(() => {
     void check();
     return () => {
       cancelled.current = true;
+      runId.current += 1; // invalidate any in-flight probe loop
       if (bannerTimer.current) clearTimeout(bannerTimer.current);
     };
   }, [check]);

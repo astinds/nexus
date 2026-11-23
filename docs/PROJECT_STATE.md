@@ -3,7 +3,7 @@
 Update this file at the end of **every** stage. A future model must be able to resume
 from this page alone.
 
-Last updated: Stage 6.2 Phase 1 complete (CI & cold-start resilience).
+Last updated: Stage 6.2 Phase 2 complete (PDF edge cases & 512 MB memory safety).
 Repository: https://github.com/astinds/nexus (branch `main`)
 Stage 5A commit: `a51ed8a`
 Stage 5B commit: `94d4f1c`
@@ -64,6 +64,7 @@ frontend job, so `scripts/next.mjs` skips the WASM preload and Next uses
 | 5B | Inspector, Collections/Tags, Studio, Settings, PWA share target | ✅ complete |
 | 6 | Self-verifying smoke test & handoff docs | ✅ complete |
 | 6.2 P1 | CI & cold-start resilience (keep-alive, CORS, fetch timeouts/retry) | ✅ complete |
+| 6.2 P2 | PDF edge-case & 512 MB memory safety | ✅ complete |
 
 ---
 
@@ -111,6 +112,50 @@ its array — `items`, `collections`, `workspaces`, `metadata_blueprints` — so
 `user_preferences.updated_at` is never maintained by a trigger. Its checksum is already
 locked in `schema_migrations`, so editing it in place is refused by design; fix it with a
 new `004_` migration in v1.1.
+
+### Phase 2 — PDF Edge-Case & 512 MB Memory Safety ✅
+
+**Audit findings**
+
+- **NUL bytes were never scrubbed.** PostgreSQL text literals cannot contain U+0000 and
+  psycopg raises before the INSERT reaches the server, so a malformed PDF whose embedded
+  font yields `\x00` produced a 500. Nothing in `app/` handled it.
+- **Encrypted PDFs gave a muddled message.** PyMuPDF opens an encrypted file without
+  raising and only fails on first page access; pypdf's `decrypt("")` result was ignored.
+  Both ended up in the generic "no PDF engine could read this document (…)" string.
+- **Memory was already partly guarded, and is now bounded end to end**: `MAX_PAGES`
+  (2000), `MAX_CHARS_PER_PAGE` (40 000), pypdf reads `len(page.images)` instead of
+  decoding XObjects, and uploads stream in 256 KB chunks to a temp file so the size cap
+  fires *while* reading rather than after buffering. What was missing was a ceiling on
+  the **sum**: 2 000 × 40 000 chars is ~80 MB of `str` in RAM.
+- **Frontend `pdf.js` was already clean**: `renderTask.cancel()`, `pdfDoc.destroy()` on
+  unmount/item change, and `Math.min(devicePixelRatio, 2)`. Only the canvas backing
+  bitmap survived a swap; it is now released explicitly.
+
+**Changes**
+
+| File | Change |
+|---|---|
+| `backend/app/text.py` | `sanitize_text()` (strips U+0000 + C0 controls, keeps `\t\n\r`, identity for clean text) and `sanitize_tree()` for JSON-bound metadata |
+| `backend/app/extractors/base.py` | `SegmentDraft.as_row()` sanitizes label, content and metadata — the last point before SQL |
+| `backend/app/services/ingest.py` | title, `error_message`, `custom_fields`, item metadata and the activity-log line are sanitized |
+| `backend/app/extractors/pdf.py` | explicit `needs_pass` check (PyMuPDF) and real `decrypt("")` verdict (pypdf) → "PDF is password-protected: remove the password and upload again."; new `MAX_TOTAL_CHARS = 4_000_000` with `_apply_text_budget()` |
+| `backend/tests/fixtures/hostile.py` | in-memory mixed/encrypted/truncated/corrupted/HTML fixtures (no binaries in git) |
+| `backend/tests/test_pdf_edge_cases.py` | 18 tests across NUL sanitisation, hostile PDFs, per-page honesty, text budget and upload caps |
+| `frontend/src/components/inspector/PdfViewer.tsx` | canvas bitmap released on unmount/item change |
+| `frontend/src/lib/useHealth.ts` | generation counter makes the 3 s re-probe strictly sequential; a Retry tap cancels the previous loop instead of stacking 60 s probes |
+
+**Verification**
+
+```
+pytest                       165 passed
+pyflakes backend/app backend/tests scripts    exit 0, no output
+npm run typecheck            exit 0
+npm run build                exit 0 — 10 routes, 84.5 kB shared
+```
+
+The encrypted-PDF fixture uses RC4 rather than AES: AES needs the optional
+`cryptography` package, and both are equally "needs a password" to the extractor.
 
 ---
 

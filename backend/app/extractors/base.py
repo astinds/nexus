@@ -30,15 +30,17 @@ class SegmentDraft:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def as_row(self) -> dict[str, Any]:
+        from ..text import sanitize_text, sanitize_tree  # local: avoid an import cycle
+
         return {
             "segment_index": self.segment_index,
-            "segment_label": self.segment_label,
-            "content": self.content,
+            "segment_label": sanitize_text(self.segment_label),
+            "content": sanitize_text(self.content),
             "is_scanned": self.is_scanned,
             "extraction_status": self.extraction_status.value
             if isinstance(self.extraction_status, SegmentStatus)
             else str(self.extraction_status),
-            "metadata": self.metadata,
+            "metadata": sanitize_tree(self.metadata),
         }
 
 

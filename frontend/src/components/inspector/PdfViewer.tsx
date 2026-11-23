@@ -66,6 +66,13 @@ export default function PdfViewer({ itemId, initialPage = 1, onPageChange }: Pro
       cancelled = true;
       void docRef.current?.destroy();
       docRef.current = null;
+      // Release the backing bitmap now: on Android Chrome a 2x-DPR page holds
+      // tens of MB, and the canvas outlives the react node briefly after a swap.
+      const canvas = canvasRef.current;
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
     };
   }, [itemId]);
 

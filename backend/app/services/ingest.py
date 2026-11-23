@@ -28,7 +28,14 @@ from ..models import (
 )
 from ..repositories import activity, collections, items, tags, workspaces
 from ..storage import BaseStorage, StorageError
-from ..text import humanize_title, read_minutes, sha256_bytes, sha256_text
+from ..text import (
+    humanize_title,
+    read_minutes,
+    sanitize_text,
+    sanitize_tree,
+    sha256_bytes,
+    sha256_text,
+)
 
 log = logging.getLogger(__name__)
 
@@ -99,7 +106,7 @@ class IngestService:
             {
                 "workspace_id": workspace["id"],
                 "blueprint_id": blueprint_id,
-                "title": title[:500],
+                "title": sanitize_text(title)[:500] or "Untitled",
                 "source_format": source_format.value,
                 "source_uri": source_uri,
                 "snapshot_uri": snapshot_uri,
@@ -110,14 +117,16 @@ class IngestService:
                 "content_hash": content_hash,
                 "processing_status": extraction.status.value,
                 "triage_status": triage_status,
-                "error_message": "; ".join(extraction.warnings)[:2000] or None,
-                "custom_fields": custom_fields or {},
-                "metadata": {
-                    **(metadata or {}),
-                    "engine": extraction.engine,
-                    "extraction": extraction.integrity_summary(),
-                    **extraction.metadata,
-                },
+                "error_message": sanitize_text("; ".join(extraction.warnings))[:2000] or None,
+                "custom_fields": sanitize_tree(custom_fields or {}),
+                "metadata": sanitize_tree(
+                    {
+                        **(metadata or {}),
+                        "engine": extraction.engine,
+                        "extraction": extraction.integrity_summary(),
+                        **extraction.metadata,
+                    }
+                ),
             },
         )
         created = items.insert_segments(
@@ -130,7 +139,7 @@ class IngestService:
         activity.log(
             cur,
             "item.created",
-            f"Captured {source_format.value} item: {title[:120]}",
+            f"Captured {source_format.value} item: {sanitize_text(title)[:120]}",
             item_id=row["id"],
             metadata={
                 "format": source_format.value,
