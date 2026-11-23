@@ -9,6 +9,12 @@ Design notes:
   * Files run in filename order: supabase/migrations/NNN_name.sql.
   * Each migration runs inside one transaction; a failure rolls the whole file
     back and stops the run, so the schema never sits half-applied.
+  * The .sql files keep their own `begin; ... commit;` wrapper so they also work
+    when pasted into the Supabase SQL editor or run with psql. Before executing,
+    those two lines are stripped: the runner owns the transaction. Running both
+    would let the file's COMMIT end the outer transaction and destroy psycopg's
+    savepoint ("savepoint _pg3_1 does not exist"), which also skipped the
+    schema_migrations bookkeeping row.
   * schema_migrations records version + SHA-256. A changed file that was already
     applied is refused (edit an applied migration only by adding a new one).
   * --verify only reads: it reports applied vs pending and exits non-zero when
@@ -41,6 +47,23 @@ def checksum(path: Path) -> str:
 
 def version_of(path: Path) -> str:
     return path.stem
+
+
+def strip_transaction_control(sql: str) -> str:
+    """Drop the file's own `begin;` / `commit;` so the runner owns the transaction.
+
+    Only standalone lines outside dollar-quoted blocks count, so `commit;` text
+    inside a `$$ ... $$` function body is never touched.
+    """
+    kept: list[str] = []
+    in_dollar = False
+    for line in sql.splitlines():
+        if line.count("$$") % 2:
+            in_dollar = not in_dollar
+        if not in_dollar and line.strip().lower() in {"begin;", "commit;"}:
+            continue
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def _connect(database_url: str):
@@ -77,6 +100,11 @@ def apply(database_url: str, *, dry_run: bool = False, verify_only: bool = False
     conn = _connect(database_url)
     try:
         done = applied_versions(conn)
+        # The read above opened an implicit transaction. Close it, otherwise the
+        # per-file block below becomes a SAVEPOINT inside it: the savepoint is
+        # only RELEASEd on exit, and conn.close() then rolls the whole thing back
+        # — DDL applied, bookkeeping row silently lost.
+        conn.commit()
         pending = [path for path in files if version_of(path) not in done]
 
         for path in files:
@@ -107,7 +135,7 @@ def apply(database_url: str, *, dry_run: bool = False, verify_only: bool = False
             try:
                 with conn.transaction():
                     with conn.cursor() as cur:
-                        cur.execute(sql)
+                        cur.execute(strip_transaction_control(sql))
                         cur.execute(
                             "insert into schema_migrations (version, checksum) values (%s, %s) "
                             "on conflict (version) do update set checksum = excluded.checksum",
@@ -117,6 +145,7 @@ def apply(database_url: str, *, dry_run: bool = False, verify_only: bool = False
                 print("FAILED")
                 print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
                 return 1
+            conn.commit()  # belt and braces: never leave the block implicit
             print("ok")
 
         print(f"done: {len(pending)} migration(s) applied")

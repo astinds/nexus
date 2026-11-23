@@ -3,12 +3,41 @@
 Update this file at the end of **every** stage. A future model must be able to resume
 from this page alone.
 
-Last updated: Stage 6.1 complete and **pushed**; GitHub CI green (run #4, `fc7dcce`).
+Last updated: Stage 6.2 Phase 1 complete (CI & cold-start resilience).
 Repository: https://github.com/astinds/nexus (branch `main`)
 Stage 5A commit: `a51ed8a`
 Stage 5B commit: `94d4f1c`
 Stage 6 commit: `31216b0`
 Stage 6.1 commit: `c4de5de` (pre-deploy patch), CI fixes: `95dafe4`, `e9079cd`, `fc7dcce`
+
+## Live database — APPLIED
+
+Migrations were applied to Supabase (`aws-1-ap-southeast-2` pooler) on 2026-11-22
+and verified:
+
+| Check | Result |
+|---|---|
+| `apply_migrations.py` | `3 migration(s) applied`; rerun → `applied: 3 pending: 0` |
+| Tables | 15/15 present |
+| `item_segments_search_idx` | `USING gin (search_vector)` |
+| Seeds | workspaces 1, relation_types 7, prompt_templates 3, preferences 1 |
+| Functions | `nexus_touch_updated_at`, `nexus_collection_tree` |
+| `schema_migrations` | 3 rows, checksums match the files |
+
+**Two runner bugs were found by finally running it against a real server** (it had
+never executed end-to-end before):
+
+1. The `.sql` files carry their own `begin; … commit;`. Executing them inside the
+   runner's `conn.transaction()` let the file's COMMIT end the outer transaction and
+   destroy psycopg's savepoint — `InvalidSavepointSpecification: savepoint "_pg3_1"
+   does not exist`. Those two lines are now stripped (dollar-quote aware, so plpgsql
+   bodies keep theirs).
+2. DDL applied but `schema_migrations` stayed empty: the read query left an implicit
+   transaction open, so each file's block was only a `SAVEPOINT` and `conn.close()`
+   rolled everything back. `conn.commit()` now runs after the read and after each
+   file.
+
+Both are pinned by `backend/tests/test_apply_migrations.py` (4 tests, no DB needed).
 
 ## CI status (verified on GitHub, not assumed)
 
@@ -34,6 +63,54 @@ frontend job, so `scripts/next.mjs` skips the WASM preload and Next uses
 | 5A | Frontend core: shell, dashboard, library, search, omni-capture, theme, auth | ✅ complete |
 | 5B | Inspector, Collections/Tags, Studio, Settings, PWA share target | ✅ complete |
 | 6 | Self-verifying smoke test & handoff docs | ✅ complete |
+| 6.2 P1 | CI & cold-start resilience (keep-alive, CORS, fetch timeouts/retry) | ✅ complete |
+
+---
+
+## Stage 6.2 — Hardening & Testing Pass
+
+### Phase 1 — CI & Cold-Start Resilience ✅
+
+**Audit findings**
+
+- `keep-alive.yml` failed on every push because `if: ${{ secrets.X != '' }}` is illegal
+  at job level (the `secrets` context is unavailable there). Already fixed before this
+  phase; it now skips cleanly via an env-var output check.
+- It still lacked a job timeout, and plain `--retry` does not retry the HTTP 5xx that
+  Render returns while booting.
+- Backend CI on `main` was **already green** (runs on `4f602db`, `e026969`, `f74a599`).
+- `CORS_ORIGINS=*` was accepted silently. With `allow_credentials=True` Starlette echoes
+  `*`, which browsers reject for credentialed requests — a production footgun with no
+  visible symptom until the session cookie stops working.
+- The frontend `fetch` had **no timeout and no retry**, so a 45 s Render wake-up hung the
+  UI and a single flaky attempt showed as an outage.
+
+**Changes**
+
+| File | Change |
+|---|---|
+| `.github/workflows/keep-alive.yml` | `timeout-minutes: 8`; `--max-time 60 --retry 3 --retry-all-errors --retry-delay 15`; documents the 60-day schedule-disable rule |
+| `backend/app/config.py` | `cors_origin_list` drops bare `*`; new `cors_wildcard_requested`; `warnings()` explains the drop |
+| `backend/tests/test_cors_health.py` | 7 tests: health shape, health public while locked, allowed-origin preflight, unlisted origin gets no ACAO, wildcard dropped, wildcard warned, explicit list unwarned |
+| `frontend/src/lib/api.ts` | `AbortController` budgets — 120 s `/ingest`, 60 s `/health`, 30 s default; `timeout_error` distinct from `network_error`; one retry limited to idempotent `GET` on status 0 or 5xx |
+| `frontend/src/lib/useHealth.ts` | Banner at ~3 s (`waking`), re-probes every 3 s, only flips to `unreachable` after the full 60 s window |
+
+**Verification**
+
+```
+pytest                       147 passed
+pyflakes backend/app backend/tests scripts    exit 0, no output
+npm run typecheck            exit 0
+npm run build                exit 0 — 10 routes, 84.5 kB shared
+```
+
+**Known follow-up (v1.1, deliberately not patched)**
+
+`002_updated_at_triggers.sql` attaches `nexus_touch_updated_at` only to the tables in
+its array — `items`, `collections`, `workspaces`, `metadata_blueprints` — so
+`user_preferences.updated_at` is never maintained by a trigger. Its checksum is already
+locked in `schema_migrations`, so editing it in place is refused by design; fix it with a
+new `004_` migration in v1.1.
 
 ---
 

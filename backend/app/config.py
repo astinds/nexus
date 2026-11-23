@@ -62,7 +62,22 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        """Allowed origins, with bare `*` removed.
+
+        `allow_credentials=True` is required for the session cookie, and browsers
+        reject a wildcard ACAO on credentialed requests. Starlette would echo `*`
+        and every preflight would fail at runtime, so a wildcard is dropped here
+        and reported by `warnings()` instead of breaking silently.
+        """
+        return [
+            origin.strip()
+            for origin in self.cors_origins.split(",")
+            if origin.strip() and origin.strip() != "*"
+        ]
+
+    @property
+    def cors_wildcard_requested(self) -> bool:
+        return any(origin.strip() == "*" for origin in self.cors_origins.split(","))
 
     @property
     def max_upload_bytes(self) -> int:
@@ -95,6 +110,11 @@ class Settings(BaseSettings):
         if self.cookie_secure is False:
             notes.append(
                 "COOKIE_SECURE=false: fine locally, set true when serving over HTTPS."
+            )
+        if self.cors_wildcard_requested:
+            notes.append(
+                "CORS_ORIGINS contains '*', which is ignored: credentialed CORS "
+                "cannot use a wildcard. List the exact frontend origins instead."
             )
         return notes
 

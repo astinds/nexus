@@ -1,19 +1,24 @@
-'use client';
-
 /**
- * Cold-start wake + session state.
+ * Cold-start probe.
  *
- * Render Free sleeps after inactivity, so the very first request of a session
- * can take ~30s or fail outright. Every screen reads this hook instead of
- * guessing: `status` drives the "Waking up NEXUS engine…" banner, `session`
- * drives the passcode gate, and `health` feeds the Settings system panel.
+ * Render Free sleeps after 15 minutes and needs ~45 s to answer the first
+ * request. The old hook made one attempt and flipped straight to "unreachable",
+ * so every wake-up looked like an outage. This version:
+ *
+ *   * shows the calm "Waking up NEXUS engine…" banner at ~3 s instead of
+ *     leaving a bare spinner;
+ *   * keeps re-probing and only says "unreachable" after the full ~60 s wake
+ *     window has elapsed (the same budget api.ts gives `/health`).
+ *
+ * It still trusts the server's own verdict: `status` drives the banner,
+ * `session` drives the passcode gate, and `health` feeds the Settings panel.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getHealth, getSession } from './api';
 import type { HealthResponse, SessionResponse } from './types';
 
-export type WakeStatus = 'loading' | 'ok' | 'degraded' | 'unreachable';
+export type WakeStatus = 'loading' | 'waking' | 'ok' | 'degraded' | 'unreachable';
 
 export interface WakeState {
   status: WakeStatus;
@@ -31,39 +36,84 @@ const INITIAL: WakeState = {
   checkedAt: null,
 };
 
+/** Show the banner early: a slow first byte almost always means a cold start. */
+const WAKING_BANNER_MS = 3_000;
+
+/** Matches TIMEOUT_HEALTH_MS in api.ts — the full Render wake window. */
+const WAKE_WINDOW_MS = 60_000;
+
+/** Pause between probes inside the wake window. */
+const PROBE_GAP_MS = 3_000;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export function useWake() {
   const [state, setState] = useState<WakeState>(INITIAL);
   const [dismissed, setDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelled = useRef(false);
 
   const check = useCallback(async () => {
+    cancelled.current = false;
     setBusy(true);
-    try {
-      const health = await getHealth();
-      const session = await getSession();
-      setState({
-        status: health.status === 'ok' ? 'ok' : 'degraded',
-        session,
-        health,
-        error: null,
-        checkedAt: Date.now(),
-      });
-      setDismissed(false);
-    } catch (error) {
-      setState({
-        status: 'unreachable',
-        session: null,
-        health: null,
-        error: error instanceof Error ? error.message : 'Backend unreachable',
-        checkedAt: Date.now(),
-      });
-    } finally {
-      setBusy(false);
+    setState((prev) => (prev.status === 'ok' ? prev : { ...prev, status: 'loading' }));
+
+    if (bannerTimer.current) clearTimeout(bannerTimer.current);
+    bannerTimer.current = setTimeout(() => {
+      setState((prev) =>
+        prev.status === 'loading' ? { ...prev, status: 'waking' } : prev,
+      );
+    }, WAKING_BANNER_MS);
+
+    const startedAt = Date.now();
+    let lastError: unknown = null;
+
+    while (!cancelled.current) {
+      try {
+        const health = await getHealth(); // 60 s budget, one retry inside api.ts
+        const session = await getSession();
+        setState({
+          status: health.status === 'ok' ? 'ok' : 'degraded',
+          session,
+          health,
+          error: null,
+          checkedAt: Date.now(),
+        });
+        setDismissed(false);
+        break;
+      } catch (error) {
+        lastError = error;
+        // Inside the wake window this is expected; keep waiting calmly.
+        if (Date.now() - startedAt >= WAKE_WINDOW_MS) {
+          setState({
+            status: 'unreachable',
+            session: null,
+            health: null,
+            error: error instanceof Error ? error.message : 'Backend unreachable',
+            checkedAt: Date.now(),
+          });
+          break;
+        }
+        setState((prev) => ({ ...prev, status: 'waking' }));
+        await sleep(PROBE_GAP_MS);
+      }
     }
+
+    if (bannerTimer.current) {
+      clearTimeout(bannerTimer.current);
+      bannerTimer.current = null;
+    }
+    void lastError;
+    setBusy(false);
   }, []);
 
   useEffect(() => {
     void check();
+    return () => {
+      cancelled.current = true;
+      if (bannerTimer.current) clearTimeout(bannerTimer.current);
+    };
   }, [check]);
 
   return {
@@ -71,7 +121,11 @@ export function useWake() {
     busy,
     retry: check,
     dismiss: () => setDismissed(true),
-    showBanner: !dismissed && (state.status === 'unreachable' || state.status === 'degraded'),
+    showBanner:
+      !dismissed &&
+      (state.status === 'waking' ||
+        state.status === 'unreachable' ||
+        state.status === 'degraded'),
     devOpen: Boolean(state.health?.auth?.dev_open_access),
   };
 }

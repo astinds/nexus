@@ -1,16 +1,20 @@
 name: Keep Supabase Alive (optional)
 
-# Pings a health endpoint on a schedule to prevent Supabase Free tier
-# from pausing the project after 7 days of inactivity.
+# Pings a health endpoint on a schedule to prevent Supabase Free tier from
+# pausing the project after 7 days of inactivity.
 #
-# Requires: Repository secret NEXUS_HEALTH_URL (e.g. https://your-app.onrender.com/api/v1/health)
-# Skips cleanly (exit 0) if the secret is not set.
+# Requires: repository secret NEXUS_HEALTH_URL
+#   e.g. https://your-app.onrender.com/api/v1/health
+# Skips cleanly (exit 0) when the secret is not set, so a fresh fork stays green.
+#
+# Note: GitHub disables scheduled workflows after 60 days without repository
+# activity. Push anything occasionally, or re-enable on the Actions tab.
 
 on:
   schedule:
-    # Every 5 days at 03:00 UTC — well within the 7-day idle window
+    # Every 5 days at 03:00 UTC — comfortably inside the 7-day idle window.
     - cron: "0 3 */5 * *"
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch: # manual trigger from the Actions tab
 
 permissions:
   contents: read
@@ -19,6 +23,10 @@ jobs:
   keep-alive:
     name: Ping health endpoint
     runs-on: ubuntu-latest
+    # Render Free takes ~45 s to wake. Budget: up to 3 retries spaced 15 s apart,
+    # each capped at 60 s, plus runner overhead — 8 minutes leaves headroom so a
+    # cold start is never cut off mid-retry.
+    timeout-minutes: 8
     steps:
       - name: Check secret is configured
         id: check
@@ -38,7 +46,10 @@ jobs:
           HEALTH_URL: ${{ secrets.NEXUS_HEALTH_URL }}
           NEXUS_ACCESS_KEY: ${{ secrets.NEXUS_ACCESS_KEY }}
         run: |
-          echo "Pinging ${HEALTH_URL}..."
+          echo "Pinging ${HEALTH_URL} ..."
+          # --retry-all-errors is required: plain --retry ignores HTTP 5xx, which
+          # is exactly what Render returns while the service is still booting.
           curl --fail --silent --show-error \
-            --max-time 90 --retry 2 --retry-delay 10 \
+            --max-time 60 \
+            --retry 3 --retry-all-errors --retry-delay 15 \
             "${HEALTH_URL}" | jq .

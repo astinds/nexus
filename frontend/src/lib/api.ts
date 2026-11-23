@@ -68,17 +68,60 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/**
+ * Cold-start budgets, in milliseconds.
+ *
+ * Render Free sleeps after 15 minutes and takes ~45 s to answer the first
+ * request, so the old unbounded `fetch` could hang the UI forever and a single
+ * flaky attempt looked like an outage. Health gets the full wake window; uploads
+ * get the longest budget because a 25 MB PDF over mobile data is slow for
+ * reasons that have nothing to do with the server.
+ */
+const TIMEOUT_HEALTH_MS = 60_000;
+const TIMEOUT_UPLOAD_MS = 120_000;
+const TIMEOUT_DEFAULT_MS = 30_000;
+
+function timeoutFor(path: string): number {
+  if (path.startsWith('/health')) return TIMEOUT_HEALTH_MS;
+  if (path.startsWith('/ingest')) return TIMEOUT_UPLOAD_MS;
+  return TIMEOUT_DEFAULT_MS;
+}
+
+/** GET is the only verb we retry: replaying a POST could duplicate an item. */
+function isRetryable(init: RequestInit): boolean {
+  const method = (init.method ?? 'GET').toUpperCase();
+  return method === 'GET';
+}
+
+async function once<T>(path: string, init: RequestInit): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
+  const controller = new AbortController();
+  const budget = timeoutFor(path);
+  const timer = setTimeout(() => controller.abort(), budget);
+
   let res: Response;
   try {
-    res = await fetch(`${BASE}${path}`, { credentials: 'include', ...init, headers });
-  } catch {
+    res = await fetch(`${BASE}${path}`, {
+      credentials: 'include',
+      ...init,
+      headers,
+      signal: init.signal ?? controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError(
+        0,
+        'timeout_error',
+        `The NEXUS backend did not answer within ${Math.round(budget / 1000)} s.`,
+      );
+    }
     throw new ApiError(0, 'network_error', 'The NEXUS backend is unreachable.');
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!res.ok) {
@@ -101,6 +144,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  try {
+    return await once<T>(path, init);
+  } catch (error) {
+    const retryable =
+      isRetryable(init) &&
+      error instanceof ApiError &&
+      (error.status === 0 || error.status >= 500);
+    if (!retryable) throw error;
+    // One calm retry, spaced far enough apart to survive a cold start.
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    return once<T>(path, init);
+  }
 }
 
 function qs(params: Record<string, string | number | boolean | null | undefined>): string {
