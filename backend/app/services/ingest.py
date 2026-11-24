@@ -27,7 +27,7 @@ from ..models import (
     SourceFormat,
 )
 from ..repositories import activity, collections, items, tags, workspaces
-from ..storage import BaseStorage, StorageError
+from ..storage import BaseStorage, StorageError, object_key
 from ..text import (
     humanize_title,
     read_minutes,
@@ -64,12 +64,14 @@ class IngestService:
     def _store_source(
         self, *, key_prefix: str, filename: str | None, data: bytes, mime_type: str | None
     ) -> str:
-        key = f"{key_prefix}/source"
-        if filename:
-            key = f"{key_prefix}/{filename}"
+        # The filename is user data: slugify it before it becomes an object key.
+        key = object_key(key_prefix, filename)
         try:
             stored = self.storage.put(key, data, mime_type)
         except StorageError as exc:
+            # Logged with the backend's own reason (status + upstream body), so a
+            # 502 here is diagnosable from Render logs without guessing.
+            log.error("storage rejected %s: %s", key, exc)
             raise ApiError(502, "storage_error", "Could not persist the uploaded file.", detail=str(exc))
         return stored.uri
 

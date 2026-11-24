@@ -10,6 +10,7 @@ Bucket should be PRIVATE: reads happen through short-lived signed URLs minted by
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -17,6 +18,22 @@ import httpx
 from .base import BaseStorage, StorageError, StoredObject, sanitize_key
 
 SCHEME = "supabase"
+
+log = logging.getLogger(__name__)
+
+REASON_MAX = 300
+
+
+def _reason(response: httpx.Response) -> str:
+    """Upstream status reason, single line and bounded.
+
+    Storage failures on Render were historically opaque: the client saw "Could
+    not persist the uploaded file." and the server logged nothing. The body of a
+    Supabase error ({"statusCode":"403","error":"InvalidJWT",...}) names the
+    cause; only the request headers carry secrets, and those are never included.
+    """
+    body = " ".join((response.text or "").split())[:REASON_MAX]
+    return body or response.reason_phrase or "no response body"
 
 
 class SupabaseStorage(BaseStorage):
@@ -60,11 +77,32 @@ class SupabaseStorage(BaseStorage):
         headers = dict(self._headers)
         headers["Content-Type"] = content_type or "application/octet-stream"
         headers["x-upsert"] = "true"
-        response = httpx.post(
-            self._object_url(key), content=data, headers=headers, timeout=self._timeout
-        )
+        try:
+            response = httpx.post(
+                self._object_url(key), content=data, headers=headers, timeout=self._timeout
+            )
+        except httpx.HTTPError as exc:
+            # Timeouts and connection drops never produce a status code; name the
+            # failure instead of letting a bare exception surface as a 500.
+            log.error(
+                "supabase upload raised %s for bucket=%s key=%s bytes=%d",
+                type(exc).__name__,
+                self.bucket,
+                key,
+                len(data),
+            )
+            raise StorageError(f"supabase upload failed: {type(exc).__name__}") from exc
         if response.status_code not in (200, 201):
-            raise StorageError(f"supabase upload failed ({response.status_code}): {response.text[:300]}")
+            reason = _reason(response)
+            log.error(
+                "supabase upload rejected: status=%s bucket=%s key=%s bytes=%d reason=%s",
+                response.status_code,
+                self.bucket,
+                key,
+                len(data),
+                reason,
+            )
+            raise StorageError(f"supabase upload failed ({response.status_code}): {reason}")
         return StoredObject(
             uri=f"{SCHEME}://{self.bucket}/{key}",
             key=key,
@@ -76,7 +114,15 @@ class SupabaseStorage(BaseStorage):
         _, key = self._split_uri(uri)
         response = httpx.get(self._object_url(key), headers=self._headers, timeout=self._timeout)
         if response.status_code != 200:
-            raise StorageError(f"supabase download failed ({response.status_code})")
+            reason = _reason(response)
+            log.error(
+                "supabase download rejected: status=%s bucket=%s key=%s reason=%s",
+                response.status_code,
+                self.bucket,
+                key,
+                reason,
+            )
+            raise StorageError(f"supabase download failed ({response.status_code}): {reason}")
         return response.content
 
     def delete(self, uri: str) -> bool:

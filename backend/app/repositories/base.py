@@ -12,12 +12,28 @@ import re
 from typing import Any, Iterable, Mapping, Sequence
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 Params = Mapping[str, Any]
 
 # Column identifiers reach SQL by string interpolation, so they are validated
 # here. Values never do: those are always bound as parameters below.
 COLUMN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
+
+
+def as_parameter(value: Any) -> Any:
+    """Adapt a plain dict for a json/jsonb column.
+
+    psycopg 3 ships no default adapter for `dict`: binding one raises
+    `ProgrammingError: cannot adapt type 'dict' using placeholder '%s'`. Every
+    dict this codebase binds belongs to a jsonb column (`custom_fields`,
+    `metadata`, `config`, `payload`), so wrap it here instead of relying on each
+    caller to remember `Jsonb`.
+
+    Lists are deliberately left alone: a list is a valid `text[]`/`uuid[]`
+    binding (`tags.aliases`), and wrapping it in `Jsonb` would break those.
+    """
+    return Jsonb(value) if isinstance(value, dict) else value
 
 
 def validate_column(column: str) -> str:
@@ -125,7 +141,7 @@ def insert_returning(
     if not values:
         raise ValueError("insert requires at least one column")
     columns = list(values.keys())
-    params = {f"v{index}": values[column] for index, column in enumerate(columns)}
+    params = {f"v{index}": as_parameter(values[column]) for index, column in enumerate(columns)}
     placeholders = ", ".join(f"%({name})s" for name in params)
     sql = (
         f"insert into {table} ({', '.join(columns)}) values ({placeholders}) "
@@ -151,7 +167,7 @@ def update_returning(
     assignments = []
     for index, (column, value) in enumerate(values.items()):
         name = f"s{index}"
-        params[name] = value
+        params[name] = as_parameter(value)
         assignments.append(f"{column} = %({name})s")
     predicates = []
     for index, (column, value) in enumerate(ident.items()):

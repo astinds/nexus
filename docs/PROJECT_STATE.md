@@ -3,7 +3,7 @@
 Update this file at the end of **every** stage. A future model must be able to resume
 from this page alone.
 
-Last updated: Stage 6.2 Phase 2 complete (PDF edge cases & 512 MB memory safety).
+Last updated: Stage 6.3 (live PDF upload incident: 500 / 502 / 120 s timeout fixed).
 Repository: https://github.com/astinds/nexus (branch `main`)
 Stage 5A commit: `a51ed8a`
 Stage 5B commit: `94d4f1c`
@@ -508,3 +508,66 @@ $ cd nexus/frontend && npm run build                   # 10 routes, 84.5 kB shar
 | `MAX_UPLOAD_MB` | no | default 25 |
 | `CORS_ORIGINS` | no | unnecessary with the Next.js proxy |
 | `COOKIE_SECURE` | production | `true` behind HTTPS |
+
+---
+
+## Stage 6.3 — Live incident: PDF uploads failing on the deployed backend
+
+Investigated on the live Render service `nexus-backend`
+(`srv-dc21i6ivcj2c739vg51g`, Free, Singapore, 512 MB / 0.15 CPU) after the PWA
+reported `Request failed (500).`, `The NEXUS backend did not answer within 120 s.`
+and `Could not persist the uploaded file.` on PDF uploads.
+
+### Root causes found in the live logs
+
+| Symptom | Root cause | Evidence |
+|---|---|---|
+| `Request failed (500).` on `compressed_1795438948752.pdf` | `items.create` bound plain `dict` values (`custom_fields`, `metadata`) to jsonb columns. psycopg 3 has no default adapter for `dict`. | `ERROR: Exception in ASGI application` followed by `psycopg.ProgrammingError: cannot adapt type 'dict' using placeholder '%s' (format: AUTO)`, `ingest.py:104 in _persist` (2026-11-24T02:21:33Z) |
+| `Could not persist the uploaded file.` on `Influence The Psychology of Persuasion.pdf` | The raw filename became the storage object key. `sanitize_key` only accepts `[A-Za-z0-9._/-]`, so the **spaces** failed it and it surfaced as a `StorageError`. Renaming away the parentheses did not help: spaces were the problem. | `POST /api/v1/ingest` answered `502 Bad Gateway` at 2026-11-24T03:37:58Z and 03:42:01Z; `storage/supabase.py` logged nothing on rejection |
+| Client timeout at 120 s | Extraction runs synchronously inside the request, and a book-length PDF on a 0.1 vCPU instance exceeds the browser's 120 s budget. Not an OOM: memory peaked at ~200 MB of 512 MB, `memory_limit` was never breached, and no `server_failed` event exists. | Render metrics 2026-11-23T05:00Z onward; `list_events` shows only user restarts and deploys |
+
+Not the cause, but worth knowing: resolving pymupdf 2.x pulled `pymupdf4llm`,
+`pymupdf-layout`, `onnxruntime`, `numpy`, `flatbuffers` and `protobuf` into the
+build (~100 MB of wheels) for a code path that only calls `pymupdf.open` and
+`page.get_text`. Build log: `Collecting pymupdf>=1.24` resolved to
+`pymupdf-2.1-cp311-abi3`, followed by `Collecting onnxruntime (from
+pymupdf>=1.24 ...)`.
+
+Earlier in the same window (`11:00–11:54Z`) `DATABASE_URL` had been pasted as a
+Markdown link — `postgresql://…@[host](https://host…)` — and psycopg rejected it
+with `unexpected character "(" at position 134 in URI`. Deploys after 11:54Z no
+longer show that warning, so the value is clean now.
+
+### What changed
+
+- `backend/app/repositories/base.py`: new `as_parameter()` wraps `dict` in
+  `Jsonb` inside `insert_returning` and `update_returning`. Lists are left alone
+  on purpose: `tags.aliases` is a `text[]` column and `Jsonb` would break it.
+- `backend/app/storage/base.py`: new `slugify_filename()` and `object_key()`.
+  `sanitize_key` stays a strict guard; user filenames are normalised before they
+  reach it, so `Influence The Psychology of Persuasion.pdf` becomes
+  `Influence-The-Psychology-of-Persuasion.pdf`. Keys are ASCII-only, bounded to
+  93 characters, and never need URL escaping.
+- `backend/app/services/ingest.py`: `_store_source` builds the key through
+  `object_key` and logs the backend's own reason at ERROR level before raising
+  the 502.
+- `backend/app/storage/supabase.py`: upload and download failures log upstream
+  `status`, `bucket`, `key`, `bytes` and a single-line 300-character reason body.
+  `httpx` timeouts and connection errors become `StorageError` instead of
+  surfacing as a 500. Service keys are never included in a message or a log line.
+- `backend/app/errors.py`: the catch-all handler returns the standard
+  `{"error": {"code": "internal_error", …}}` envelope and logs the traceback, so
+  a 500 is never a bare `Exception in ASGI application` again.
+- `backend/requirements.txt`: `pymupdf>=1.24,<2.0`.
+
+### Verification (local, on this device)
+
+```
+$ cd nexus/backend && python3 -m pytest -q                            # 183 passed
+$ cd nexus && python3 -m pyflakes backend/app backend/tests scripts   # clean
+$ cd nexus/frontend && npm run typecheck                              # exit 0
+$ cd nexus/frontend && npm run build                                  # 10 routes, 84.5 kB shared
+```
+
+New regression tests: `test_jsonb_binding.py` (6),
+`test_storage_keys_and_errors.py` (11), `test_error_envelope.py` (1).

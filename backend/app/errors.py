@@ -105,3 +105,24 @@ def install_error_handlers(app: FastAPI) -> None:
             status_code=exc.status_code,
             content={"error": {"code": "http_error", "message": str(exc.detail)}},
         )
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+        """Last resort: keep the client contract and the traceback.
+
+        Without this, an uncaught error left Starlette's bare
+        "Exception in ASGI application" 500 with no error code, so the PWA could
+        only report "Request failed (500)." and the cause lived nowhere but the
+        stack trace. The traceback is logged here; the response stays generic so
+        internal detail never reaches the browser.
+        """
+        log.exception("unhandled %s on %s %s: %s", type(exc).__name__, request.method, request.url.path, exc)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": {
+                    "code": "internal_error",
+                    "message": "The NEXUS backend hit an unexpected error. It has been logged.",
+                }
+            },
+        )

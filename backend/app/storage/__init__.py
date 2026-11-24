@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from ..config import Settings
-from .base import BaseStorage, StorageError, StoredObject, sanitize_key  # noqa: F401
+from .base import (  # noqa: F401
+    BaseStorage,
+    StorageError,
+    StoredObject,
+    object_key,
+    sanitize_key,
+    slugify_filename,
+)
 from .local import LocalStorage
 from .supabase import SupabaseStorage
 
@@ -25,5 +32,7 @@ __all__ = [
     "StoredObject",
     "SupabaseStorage",
     "build_storage",
+    "object_key",
     "sanitize_key",
+    "slugify_filename",
 ]
