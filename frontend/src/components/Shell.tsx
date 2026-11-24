@@ -4,17 +4,35 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import OmniCaptureModal from '@/components/OmniCaptureModal';
+import {
+  DashboardIcon,
+  LibraryIcon,
+  PlusIcon,
+  SearchIcon,
+  SettingsIcon,
+} from '@/components/icons';
 import { getSavedViews, getWorkspaces } from '@/lib/api';
 import type { SavedView, Workspace } from '@/lib/types';
 
-const NAV = [
-  { href: '/', label: 'Dashboard', glyph: '◧' },
-  { href: '/library', label: 'Library', glyph: '▤' },
-  { href: '/search', label: 'Search', glyph: '⌕' },
-  { href: '/collections', label: 'Collections', glyph: '❏' },
-  { href: '/studio', label: 'Studio', glyph: '◈' },
-  { href: '/settings', label: 'Settings', glyph: '⚙' },
+type NavItem = {
+  href: string;
+  label: string;
+  Icon: (props: { className?: string }) => React.ReactElement;
+};
+
+/** One icon set, 20px, one stroke weight — no font glyphs in the chrome. */
+const NAV: NavItem[] = [
+  { href: '/', label: 'Dashboard', Icon: DashboardIcon },
+  { href: '/library', label: 'Library', Icon: LibraryIcon },
+  { href: '/search', label: 'Search', Icon: SearchIcon },
+  { href: '/collections', label: 'Collections', Icon: LibraryIcon },
+  { href: '/studio', label: 'Studio', Icon: SearchIcon },
+  { href: '/settings', label: 'Settings', Icon: SettingsIcon },
 ];
+
+/** Phone bar: Dashboard, Library, capture, Search, Settings. */
+const LEFT = [NAV[0], NAV[1]];
+const RIGHT = [NAV[2], NAV[5]];
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -69,7 +87,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
         {workspaces.length > 0 ? (
           <div className="px-4 pb-4">
-            <label htmlFor="workspace-switch" className="mb-1 block text-[10px] uppercase opacity-50">
+            <label htmlFor="workspace-switch" className="mb-1 block text-[10px] uppercase text-[var(--text-subtle)]">
               Workspace
             </label>
             <select
@@ -95,12 +113,10 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               className={`flex items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors ${
                 isActive(item.href)
                   ? 'bg-[var(--surface-2)] text-[var(--accent)]'
-                  : 'opacity-70 hover:bg-[var(--surface-2)] hover:opacity-100'
+                  : 'text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
               }`}
             >
-              <span aria-hidden className="w-4 text-center text-xs opacity-70">
-                {item.glyph}
-              </span>
+              <item.Icon className="shrink-0 opacity-90" />
               {item.label}
             </Link>
           ))}
@@ -108,13 +124,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
         {lenses.length > 0 ? (
           <div className="mt-5 px-4">
-            <p className="mb-2 text-[10px] uppercase opacity-50">Pinned lenses</p>
+            <p className="mb-2 text-[10px] uppercase text-[var(--text-subtle)]">Pinned lenses</p>
             <ul className="space-y-1">
               {lenses.slice(0, 6).map((lens) => (
                 <li key={lens.id}>
                   <Link
                     href={`/library?lens=${lens.id}`}
-                    className="block truncate rounded px-2 py-1 text-xs opacity-70 hover:bg-[var(--surface-2)] hover:opacity-100"
+                    className="block truncate rounded px-2 py-1 text-xs text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
                   >
                     {lens.name}
                   </Link>
@@ -128,7 +144,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             onClick={focusSearch}
-            className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-left text-xs opacity-60 hover:opacity-100"
+            className="btn-quiet w-full rounded-md px-2 py-1.5 text-left text-xs"
           >
             Quick search <span className="float-right opacity-70">⌘K</span>
           </button>
@@ -147,42 +163,43 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         <div className="mx-auto w-full max-w-5xl">{children}</div>
       </main>
 
-      {/* Mobile bottom nav: four primary destinations plus the capture action. */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-[var(--border)] bg-[var(--surface)] px-1 pb-[env(safe-area-inset-bottom)] pt-1 md:hidden">
-        {[NAV[0], NAV[1]].map((item) => (
+      {/* Mobile bottom nav: four destinations plus the centered capture action. */}
+      <nav
+        aria-label="Primary"
+        className="nav-safe fixed inset-x-0 bottom-0 z-40 flex items-stretch justify-around border-t border-[var(--border)] bg-[var(--surface)] px-1 pt-1 md:hidden"
+      >
+        {LEFT.map((item) => (
           <Link
             key={item.href}
             href={item.href}
-            className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] ${
-              isActive(item.href) ? 'text-[var(--accent)]' : 'opacity-60'
+            aria-current={isActive(item.href) ? 'page' : undefined}
+            className={`flex min-h-[44px] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] ${
+              isActive(item.href) ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'
             }`}
           >
-            <span aria-hidden className="text-base leading-none">
-              {item.glyph}
-            </span>
-            {item.label}
+            <item.Icon />
+            <span>{item.label}</span>
           </Link>
         ))}
         <button
           type="button"
           onClick={() => setCapture(true)}
           aria-label="Capture"
-          className="mx-1 flex h-11 w-11 items-center justify-center rounded-full bg-[var(--accent)] text-lg font-medium text-black"
+          className="mx-1 flex h-12 w-12 shrink-0 items-center justify-center self-center rounded-full bg-[var(--accent)] text-[var(--accent-fg)] shadow-lg shadow-black/30"
         >
-          +
+          <PlusIcon width={22} height={22} />
         </button>
-        {[NAV[2], NAV[5]].map((item) => (
+        {RIGHT.map((item) => (
           <Link
             key={item.href}
             href={item.href}
-            className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] ${
-              isActive(item.href) ? 'text-[var(--accent)]' : 'opacity-60'
+            aria-current={isActive(item.href) ? 'page' : undefined}
+            className={`flex min-h-[44px] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] ${
+              isActive(item.href) ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'
             }`}
           >
-            <span aria-hidden className="text-base leading-none">
-              {item.glyph}
-            </span>
-            {item.label}
+            <item.Icon />
+            <span>{item.label}</span>
           </Link>
         ))}
       </nav>

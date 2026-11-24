@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Shell from '@/components/Shell';
+import Accordion from '@/components/ui/Accordion';
 import { exportLibraryUrl, getHealth, getIngestFormats } from '@/lib/api';
 import { ACCENTS, FONT_STACKS, PALETTES, useTheme } from '@/lib/useTheme';
 import type { HealthResponse, IngestFormats } from '@/lib/types';
@@ -24,15 +25,18 @@ curl -X POST "$NEXUS/api/v1/items" \\
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-      <h2 className="text-[10px] uppercase tracking-wider opacity-50">{title}</h2>
+      <h2 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-subtle)]">
+        {title}
+      </h2>
       {children}
     </section>
   );
 }
 
 const chip = 'rounded-md border px-2 py-1 text-[11px]';
-const chipOn = 'border-[var(--accent)] text-[var(--accent)]';
-const chipOff = 'border-[var(--border)] opacity-60 hover:opacity-100';
+const chipOn = 'border-[var(--accent)] text-[var(--text)] bg-[var(--accent-soft)]';
+const chipOff =
+  'border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent-ring)]';
 
 export default function SettingsPage() {
   const { prefs, save } = useTheme();
@@ -60,7 +64,7 @@ export default function SettingsPage() {
       <div className="space-y-4">
         <div>
           <h1 className="mb-1 text-lg font-semibold tracking-tight">Settings</h1>
-          <p className="text-xs opacity-50">
+          <p className="text-xs text-[var(--text-subtle)]">
             Preferences are stored in the backend and applied live as CSS custom properties.
           </p>
         </div>
@@ -97,27 +101,54 @@ export default function SettingsPage() {
         </Section>
 
         <Section title="Accent">
-          <div className="flex flex-wrap items-center gap-2">
-            {ACCENTS.map((accent) => (
-              <button
-                key={accent.value}
-                type="button"
-                aria-label={accent.label}
-                onClick={() => update({ accent: accent.value })}
-                className="h-7 w-7 rounded-full border-2"
-                style={{
-                  background: accent.value,
-                  borderColor: prefs.accent === accent.value ? '#fff' : 'transparent',
-                }}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {ACCENTS.map((accent) => {
+              const selected = prefs.accent.toLowerCase() === accent.value.toLowerCase();
+              return (
+                <button
+                  key={accent.value}
+                  type="button"
+                  aria-label={accent.label}
+                  aria-pressed={selected}
+                  title={accent.label}
+                  onClick={() => update({ accent: accent.value })}
+                  className="h-8 w-8 rounded-full border-2 transition-transform hover:scale-105"
+                  style={{
+                    background: accent.value,
+                    borderColor: selected ? 'var(--text)' : 'transparent',
+                    boxShadow: selected ? '0 0 0 2px var(--surface)' : 'none',
+                  }}
+                />
+              );
+            })}
+            {/* Custom picker dressed as a swatch: the native input keeps its
+                colour picker behaviour but stops looking like a browser relic. */}
+            <label
+              className="relative flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border-2 border-dashed border-[var(--border)] hover:border-[var(--accent-ring)]"
+              style={{ background: prefs.accent }}
+              title="Custom accent"
+            >
+              <input
+                type="color"
+                aria-label="Custom accent"
+                value={prefs.accent}
+                onChange={(event) => update({ accent: event.target.value })}
+                className="absolute inset-0 h-full w-full cursor-pointer rounded-full opacity-0"
               />
-            ))}
-            <input
-              type="color"
-              aria-label="Custom accent"
-              value={prefs.accent}
-              onChange={(event) => update({ accent: event.target.value })}
-              className="h-7 w-10 rounded border border-[var(--border)] bg-transparent"
-            />
+              <svg
+                viewBox="0 0 24 24"
+                width={14}
+                height={14}
+                fill="none"
+                stroke="var(--accent-fg)"
+                strokeWidth={2.2}
+                strokeLinecap="round"
+                aria-hidden
+              >
+                <path d="M12 5.5v13M5.5 12h13" />
+              </svg>
+            </label>
+            <span className="font-mono text-[11px] text-[var(--text-subtle)]">{prefs.accent}</span>
           </div>
         </Section>
 
@@ -134,7 +165,7 @@ export default function SettingsPage() {
               </button>
             ))}
           </div>
-          <label className="block text-[11px] opacity-60">
+          <label className="block text-[11px] text-[var(--text-muted)]">
             Font scale · {Number(prefs.font_scale).toFixed(2)}×
             <input
               type="range"
@@ -162,12 +193,34 @@ export default function SettingsPage() {
             NEXUS keeps capture frictionless: one field is optional, none are required. This
             paragraph previews the reading width and scale above.
           </div>
-          {notice ? <p className="text-[11px] opacity-60">{notice}</p> : null}
+          {notice ? <p className="text-[11px] text-[var(--text-subtle)]">{notice}</p> : null}
         </Section>
 
-        <Section title="System health">
+        {/* Health stays one glance away: the green dot and `ok · v1.0.0` live in
+            the summary line; the engine table lives behind the disclosure. */}
+        <Accordion
+          title="System health"
+          summary={
+            health ? (
+              <span className="flex items-center gap-1.5 text-[var(--text-muted)]">
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${
+                    health.status === 'ok' ? 'bg-emerald-400' : 'bg-amber-400'
+                  }`}
+                />
+                <span className="truncate">
+                  {health.status} · v{health.version}
+                </span>
+              </span>
+            ) : (
+              <span className="text-[var(--text-subtle)]">Backend unreachable</span>
+            )
+          }
+        >
           {!health ? (
-            <p className="text-[11px] opacity-50">Backend unreachable.</p>
+            <p className="text-[11px] text-[var(--text-subtle)]">
+              The backend did not answer the health check. Captures are refused until it wakes.
+            </p>
           ) : (
             <div className="space-y-2 text-[11px]">
               <p className="flex items-center gap-2">
@@ -176,11 +229,11 @@ export default function SettingsPage() {
                     health.status === 'ok' ? 'bg-emerald-400' : 'bg-amber-400'
                   }`}
                 />
-                <span className="opacity-70">
+                <span className="text-[var(--text-muted)]">
                   {health.status} · v{health.version} · auth {health.auth.mode}
                 </span>
               </p>
-              <p className="opacity-50">
+              <p className="text-[var(--text-subtle)]">
                 max upload {health.limits.max_upload_mb} MB · page size{' '}
                 {health.limits.page_size_default}–{health.limits.page_size_max}
               </p>
@@ -192,8 +245,8 @@ export default function SettingsPage() {
                         engine.available ? 'bg-emerald-400' : 'bg-amber-400'
                       }`}
                     />
-                    <span className="font-mono">{engine.engine}</span>
-                    <span className="min-w-0 truncate opacity-40">{engine.detail}</span>
+                    <span className="font-mono text-[var(--text)]">{engine.engine}</span>
+                    <span className="min-w-0 truncate text-[var(--text-subtle)]">{engine.detail}</span>
                   </li>
                 ))}
               </ul>
@@ -205,35 +258,35 @@ export default function SettingsPage() {
                 </ul>
               ) : null}
               {formats ? (
-                <p className="opacity-50">
+                <p className="text-[var(--text-subtle)]">
                   {formats.formats.length} formats · file-only:{' '}
                   {formats.file_only.join(', ') || 'none'}
                 </p>
               ) : null}
             </div>
           )}
-        </Section>
+        </Accordion>
 
         <Section title="Backup">
           <a
             href={exportLibraryUrl()}
-            className="inline-block rounded-lg bg-[var(--accent)] px-3 py-2 text-xs font-medium text-black"
+            className="btn-primary inline-block rounded-lg px-3 py-2 text-xs font-medium"
           >
             Download full library ZIP
           </a>
-          <p className="text-[11px] opacity-50">
+          <p className="text-[11px] text-[var(--text-subtle)]">
             Every item, its segments, tags and collections, streamed as one archive.
           </p>
         </Section>
 
-        <Section title="API reference">
-          <pre className="overflow-x-auto rounded-lg bg-[var(--bg)] p-3 text-[10px] leading-relaxed opacity-70">
+        <Accordion title="API reference">
+          <pre className="overflow-x-auto rounded-lg bg-[var(--bg)] p-3 text-[10px] leading-relaxed text-[var(--text-muted)]">
             {API_SNIPPET}
           </pre>
-          <p className="text-[11px] opacity-50">
+          <p className="text-[11px] text-[var(--text-subtle)]">
             Interactive docs live at <span className="font-mono">/docs</span> on the backend.
           </p>
-        </Section>
+        </Accordion>
       </div>
     </Shell>
   );

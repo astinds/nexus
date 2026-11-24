@@ -47,6 +47,23 @@ export const ACCENTS: { label: string; value: string }[] = [
   { label: 'Moss', value: '#8fbf6a' },
 ];
 
+function hexToRgba(hex: string, alpha: number): string {
+  const value = (hex || '').replace('#', '').trim();
+  const full =
+    value.length === 3
+      ? value
+          .split('')
+          .map((char) => char + char)
+          .join('')
+      : value.padEnd(6, '0').slice(0, 6);
+  const int = Number.parseInt(full, 16);
+  if (Number.isNaN(int)) return `rgba(124, 156, 245, ${alpha})`;
+  const r = (int >> 16) & 255;
+  const g = (int >> 8) & 255;
+  const b = int & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function applyPreferences(prefs: PreferencePayload) {
   if (typeof document === 'undefined') return;
   const root = document.documentElement.style;
@@ -57,6 +74,9 @@ function applyPreferences(prefs: PreferencePayload) {
   root.setProperty('--surface-2', surface2);
   root.setProperty('--border', border);
   root.setProperty('--accent', prefs.accent);
+  // Snippet highlights and focus rings follow the chosen accent.
+  root.setProperty('--accent-soft', hexToRgba(prefs.accent, 0.22));
+  root.setProperty('--accent-ring', hexToRgba(prefs.accent, 0.5));
   root.setProperty('--font-reading', FONT_STACKS[prefs.font_family] ?? FONT_STACKS['editorial-serif']);
   root.setProperty('--reading-width', prefs.reading_width);
   root.setProperty('--font-scale', String(prefs.font_scale));

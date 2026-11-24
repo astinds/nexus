@@ -3,36 +3,15 @@
 /**
  * Renders a PostgreSQL `ts_headline` snippet without raw HTML injection.
  *
- * `ts_headline` only adds its configured start/end delimiters (`<b>`/`</b>` by
- * default) around matched terms; the document text between them is untrusted.
- * This splits on those delimiters and renders the pieces as React text nodes,
- * so any HTML that happens to live in the document is escaped by React instead
- * of being interpreted. No `dangerouslySetInnerHTML` anywhere.
+ * The splitting rule lives in lib/snippet.ts; this component only maps the
+ * resulting parts to text nodes and `<mark>` elements, so HTML inside a
+ * document is escaped by React instead of being interpreted. No
+ * `dangerouslySetInnerHTML` anywhere.
  */
 
-const OPEN = '<b>';
-const CLOSE = '</b>';
+import { splitSnippet } from '@/lib/snippet';
 
-export function splitHighlighted(snippet: string): { text: string; hit: boolean }[] {
-  const parts: { text: string; hit: boolean }[] = [];
-  let cursor = 0;
-  let hit = false;
-
-  while (cursor < snippet.length) {
-    const next = hit ? snippet.indexOf(CLOSE, cursor) : snippet.indexOf(OPEN, cursor);
-
-    if (next === -1) {
-      parts.push({ text: snippet.slice(cursor), hit });
-      break;
-    }
-
-    if (next > cursor) parts.push({ text: snippet.slice(cursor, next), hit });
-    cursor = next + (hit ? CLOSE.length : OPEN.length);
-    hit = !hit;
-  }
-
-  return parts.filter((part) => part.text.length > 0);
-}
+export { splitHighlighted, splitSnippet } from '@/lib/snippet';
 
 export default function HighlightedSnippet({
   snippet,
@@ -44,12 +23,12 @@ export default function HighlightedSnippet({
   if (!snippet) return null;
 
   return (
-    <p className={`text-sm leading-relaxed opacity-80 ${className}`}>
-      {splitHighlighted(snippet).map((part, index) =>
+    <p className={`snippet text-sm leading-relaxed text-[var(--text-muted)] ${className}`}>
+      {splitSnippet(snippet).map((part, index) =>
         part.hit ? (
-          <strong key={index} className="font-semibold text-[var(--accent)]">
+          <mark key={index} className="snippet-mark">
             {part.text}
-          </strong>
+          </mark>
         ) : (
           <span key={index}>{part.text}</span>
         )

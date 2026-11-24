@@ -6,7 +6,8 @@
     "dev": "node scripts/next.mjs dev",
     "build": "node scripts/next.mjs build --no-lint",
     "start": "node scripts/next.mjs start",
-    "typecheck": "node node_modules/typescript/lib/tsc.js --noEmit"
+    "typecheck": "node node_modules/typescript/lib/tsc.js --noEmit",
+    "check:helpers": "node scripts/check-helpers.mjs"
   },
   "dependencies": {
     "next": "14.1.3",

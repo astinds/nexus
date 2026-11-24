@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import Shell from '@/components/Shell';
 import { ingestText, ingestUrl } from '@/lib/api';
+import { notifyDataChanged } from '@/lib/sync';
 import type { IngestResult } from '@/lib/types';
 
 /**
@@ -44,6 +45,7 @@ function CaptureForm() {
         source_format: 'note',
       });
       setResult(res);
+      notifyDataChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save this capture.');
     } finally {
@@ -59,6 +61,7 @@ function CaptureForm() {
     try {
       const res = await ingestUrl({ url: sharedUrl, title: title || null });
       setResult(res);
+      notifyDataChanged();
     } catch (err) {
       setError(
         err instanceof Error
@@ -75,13 +78,13 @@ function CaptureForm() {
       <div className="mx-auto max-w-xl space-y-4">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">Capture shared content</h1>
-          <p className="text-xs opacity-50">
+          <p className="text-xs text-[var(--text-subtle)]">
             Everything arrives in the Inbox with zero required fields — triage later.
           </p>
         </div>
 
         {sharedUrl ? (
-          <p className="truncate rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-[11px] opacity-60">
+          <p className="truncate rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-[11px] text-[var(--text-muted)]">
             {sharedUrl}
           </p>
         ) : null}

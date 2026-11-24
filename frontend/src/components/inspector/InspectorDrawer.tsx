@@ -17,6 +17,8 @@ import {
   type Tag,
   type TriageStatus,
 } from '@/lib/types';
+import { notifyDataChanged } from '@/lib/sync';
+import { triageLabel } from '@/lib/format';
 
 const chip = 'rounded-md border border-[var(--border)] px-2 py-1 text-[11px]';
 
@@ -53,6 +55,8 @@ export default function InspectorDrawer({
     try {
       await setTriage(item.id, status);
       onChanged();
+      // Dashboard counters and Library filters update without a reload.
+      notifyDataChanged();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Could not change triage.');
     }
@@ -90,6 +94,7 @@ export default function InspectorDrawer({
   const remove = async () => {
     try {
       await deleteItem(item.id);
+      notifyDataChanged();
       onDeleted();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Could not delete this item.');
@@ -99,20 +104,23 @@ export default function InspectorDrawer({
   return (
     <aside className="space-y-5 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
       <section className="space-y-2">
-        <h3 className="text-[10px] uppercase tracking-wider opacity-50">Triage</h3>
+        <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-subtle)]">
+          Triage
+        </h3>
         <div className="flex flex-wrap gap-1">
           {TRIAGE_STATUSES.map((status) => (
             <button
               key={status}
               type="button"
+              aria-pressed={item.triage_status === status}
               onClick={() => triage(status)}
               className={`${chip} ${
                 item.triage_status === status
-                  ? 'bg-[var(--accent)] font-medium text-black'
-                  : 'opacity-70 hover:opacity-100'
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)] font-medium text-[var(--text)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
               }`}
             >
-              {status.replace(/_/g, ' ')}
+              {triageLabel(status)}
             </button>
           ))}
         </div>

@@ -571,3 +571,104 @@ $ cd nexus/frontend && npm run build                                  # 10 route
 
 New regression tests: `test_jsonb_binding.py` (6),
 `test_storage_keys_and_errors.py` (11), `test_error_envelope.py` (1).
+
+---
+
+## Pass 1 — Visual design, contrast, mobile ergonomics and state sync
+
+Frontend-only. No backend route, model, migration or preference payload changed;
+the same `PATCH /api/v1/preferences` shape is written, now with two derived
+tokens computed in the browser.
+
+### Fixed: search showed its own markup
+
+`POST /api/v1/search` returns `ts_headline` output with
+`StartSel=<mark>, StopSel=</mark>` (`backend/app/services/search.py:34`), but
+`HighlightedSnippet` split on `<b>`/`</b>`. Nothing matched, so every result
+rendered the literal text `<mark>…</mark>`.
+
+- Splitting moved to `frontend/src/lib/snippet.ts` (framework-free, importable by
+  a plain Node check), which splits on `<mark>` and still accepts the older
+  `<b>` form.
+- The component maps parts to text nodes and `<mark className="snippet-mark">`;
+  there is still no `dangerouslySetInnerHTML`, and unbalanced delimiters stay
+  text.
+
+### Contrast, typography and shared formatting
+
+- `globals.css` gained a measured text ramp — `--text` (~15.9:1 on `--surface`),
+  `--text-muted` (~8.9:1), `--text-subtle` (~6.1:1) — replacing `opacity-50`
+  dimming. Placeholders now use `--text-subtle`.
+- Disabled primary actions (`Search`, `Upload`, `Clip URL`, `Create note`, `Go`)
+  use `.btn-primary:disabled`: `--disabled-bg` surface with `--disabled-fg` text
+  (~5.4:1) instead of dark text on a dimmed accent.
+- `frontend/src/lib/format.ts` is the single source for labels:
+  `web_article → Web Article`, `pdf → PDF`, `markdown/note → Note`,
+  `550 → 9h 10m`, `9 → 9 min`, `processed → Done`, `cold_archive → Archive`,
+  `1 scanned segment · 1 failed extraction` (never `segment(s)`), and
+  `Resume · p. 8` / `Resume · #8`.
+- `components/ui/badges.tsx` renders format, triage, page and duration badges;
+  Dashboard, Library cards, Library table and Search all use them.
+- Palettes, accent picker, font stack, reading width and density controls are
+  untouched. `useTheme` now also derives `--accent-soft` / `--accent-ring` from
+  the chosen accent so highlights and focus rings follow it.
+
+### Mobile navigation and headers
+
+- Bottom bar uses `components/icons.tsx`: five 20px inline SVGs, 1.75 stroke,
+  `currentColor`, 44px tap targets, `aria-current` on the active route.
+- `.nav-safe` adds `env(safe-area-inset-bottom)`; the page reserves
+  `--nav-height` so content never hides behind the bar.
+- `Quick capture` (Dashboard) and `Capture` (Library) are `hidden md:inline-block`:
+  the centered `+` owns capture on phones, desktop keeps its buttons.
+
+### Dashboard and Library decluttered
+
+- Dashboard: `Library`, `By format` and `By blueprint` collapsed into one summary
+  card (4-stat grid plus inline chips), which lifts `Continue reading` and
+  `Recently added` near the top of a phone screen.
+- `Continue reading` rows show `Resume · p. 8` in an accent-tinted pill with a
+  chevron; reading position and duration sit underneath.
+- `Recent activity` caps at 6 rows, collapses consecutive identical entries with
+  an `×N` marker, shows the item title when the id is in the dashboard payload,
+  and uses `relativeTime` with `--text-muted`/`--text-subtle`.
+- Library: the six-dropdown wall became a scrolling status pill row
+  (`All`, `Inbox`, `Reading`, `Done`, `Archive`) plus a `Filters` toggle carrying
+  an active-count badge. The panel holds the six facets, `Save as Smart Lens`,
+  `Reset filters` and saved-lens chips.
+- Library table is `table-fixed` with real column widths; titles wrap with
+  `line-clamp-2 break-words` instead of clipping mid-word.
+
+### Settings and capture ergonomics
+
+- Accent picker: the custom `<input type="color">` is now a circular swatch
+  (opacity-0 input over a `+` glyph) matching the preset swatches, with a ring on
+  the selected preset and the current hex shown.
+- `System health` and `API reference` are native `<details>` accordions
+  (`components/ui/Accordion.tsx`); the header keeps the green dot and
+  `ok · v1.0.0`.
+- Capture sheet: drag-handle pill, `.sheet-safe` bottom inset, and the raw file
+  input replaced by a touch-sized dropzone showing filename, size, detected
+  format and a clear button.
+
+### Instant state sync
+
+- `frontend/src/lib/sync.ts`: `notifyDataChanged()` fires after a successful
+  upload, URL clip, note, triage change or delete; `useLiveData()` subscribes to
+  that event, cross-tab `storage` events, window focus and tab visibility.
+- Dashboard and Library call `useLiveData(load)`, so counters and lists refresh
+  behind the closing sheet and after returning to the tab, with no new endpoint
+  and no polling.
+
+### Verification
+
+```
+$ cd nexus/backend && python3 -m pytest -q          # 183 passed
+$ cd nexus/frontend && npm run typecheck            # exit 0
+$ cd nexus/frontend && npm run build                # 10 routes, 84.5 kB shared
+$ cd nexus/frontend && npm run check:helpers        # format + snippet checks passed
+```
+
+`check:helpers` is a dependency-free Node script over the pure modules in
+`src/lib/format.ts` and `src/lib/snippet.ts`; it is a developer check, not part
+of the production build.

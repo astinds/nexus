@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import { ApiError, getIngestFormats } from '@/lib/api';
+import { CloseIcon } from '@/components/icons';
 import {
   FileTab,
   NoteTab,
   UrlTab,
   type Runner,
 } from '@/components/capture/CaptureTabs';
+import { plural } from '@/lib/format';
+import { notifyDataChanged } from '@/lib/sync';
 import type { IngestResult } from '@/lib/types';
 
 type Tab = 'file' | 'url' | 'note';
@@ -42,7 +45,11 @@ export default function OmniCaptureModal({ onClose }: { onClose: () => void }) {
     setError('');
     setResult(null);
     try {
-      setResult(await task());
+      const saved = await task();
+      setResult(saved);
+      // Dashboard counters and the Library list behind this sheet re-fetch now,
+      // not on the next manual reload.
+      notifyDataChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Capture failed.');
     } finally {
@@ -56,17 +63,22 @@ export default function OmniCaptureModal({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-label="Capture"
-        className="max-h-[92vh] w-full overflow-y-auto rounded-t-2xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:max-w-lg sm:rounded-xl"
+        className="sheet-safe max-h-[92vh] w-full overflow-y-auto rounded-t-2xl border border-[var(--border)] bg-[var(--surface)] px-5 pb-4 pt-2.5 sm:max-w-lg sm:rounded-xl sm:p-5"
       >
+        {/* Drag affordance: the sheet is anchored to the bottom edge on phones. */}
+        <div className="mb-2 flex justify-center sm:hidden" aria-hidden>
+          <span className="h-1 w-10 rounded-full bg-[var(--border)]" />
+        </div>
+
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-semibold tracking-tight">Capture</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded px-2 py-1 text-lg leading-none opacity-50 hover:opacity-100"
+            className="rounded p-2 text-[var(--text-subtle)] hover:text-[var(--text)]"
           >
-            ×
+            <CloseIcon width={18} height={18} />
           </button>
         </div>
 
@@ -82,7 +94,9 @@ export default function OmniCaptureModal({ onClose }: { onClose: () => void }) {
                 setResult(null);
               }}
               className={`flex-1 rounded-md px-2 py-1.5 text-xs ${
-                tab === entry.id ? 'bg-[var(--accent)] font-medium text-black' : 'opacity-70'
+                tab === entry.id
+                  ? 'bg-[var(--surface)] font-medium text-[var(--text)]'
+                  : 'text-[var(--text-muted)]'
               }`}
             >
               {entry.label}
@@ -97,7 +111,7 @@ export default function OmniCaptureModal({ onClose }: { onClose: () => void }) {
         {tab === 'note' ? <NoteTab busy={busy} onRun={run} /> : null}
 
         {error ? (
-          <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs">
+          <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
             {error}
           </p>
         ) : null}
@@ -113,7 +127,7 @@ function CaptureResult({ result }: { result: IngestResult }) {
     <div className="mt-4 space-y-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-xs">
       <p>
         Saved <span className="font-medium">{result.item.title}</span>
-        {result.segments_created > 0 ? ` · ${result.segments_created} segments` : ''}
+        {result.segments_created > 0 ? ` · ${plural(result.segments_created, 'segment')}` : ''}
         {result.engine ? ` · ${result.engine}` : ''}
       </p>
       {result.duplicate ? (
@@ -134,7 +148,7 @@ function CaptureResult({ result }: { result: IngestResult }) {
       ))}
       <a
         href={`/items/${result.item.id}`}
-        className="inline-block underline underline-offset-2 opacity-80 hover:opacity-100"
+        className="inline-block text-[var(--text)] underline underline-offset-2"
       >
         Open item
       </a>

@@ -4,7 +4,9 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Shell from '@/components/Shell';
 import HighlightedSnippet from '@/components/HighlightedSnippet';
+import { DurationLabel, FormatPill, PageBadge, TriageBadge } from '@/components/ui/badges';
 import { getTags, search } from '@/lib/api';
+import { formatLabel, plural, triageLabel } from '@/lib/format';
 import { Suspense, useEffect, useRef, useState } from 'react';
 import {
   SOURCE_FORMATS,
@@ -18,7 +20,7 @@ import {
 const PAGE_SIZE = 20;
 
 const selectClass =
-  'rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs outline-none focus:border-[var(--accent)]';
+  'rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs text-[var(--text)] outline-none focus:border-[var(--accent)]';
 
 function SearchView() {
   const router = useRouter();
@@ -108,7 +110,7 @@ function SearchView() {
           <button
             type="submit"
             disabled={loading || !query.trim()}
-            className="shrink-0 rounded-lg bg-[var(--accent)] px-3 text-xs font-medium text-black disabled:opacity-40"
+            className="btn-primary shrink-0 rounded-lg px-3 text-xs font-medium"
           >
             {loading ? '…' : 'Search'}
           </button>
@@ -124,7 +126,7 @@ function SearchView() {
             <option value="">All formats</option>
             {SOURCE_FORMATS.map((format) => (
               <option key={format} value={format}>
-                {format.replace(/_/g, ' ')}
+                {formatLabel(format)}
               </option>
             ))}
           </select>
@@ -137,7 +139,7 @@ function SearchView() {
             <option value="">Any status</option>
             {TRIAGE_STATUSES.map((status) => (
               <option key={status} value={status}>
-                {status.replace(/_/g, ' ')}
+                {triageLabel(status)}
               </option>
             ))}
           </select>
@@ -157,20 +159,20 @@ function SearchView() {
         </div>
 
         {error ? (
-          <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs">
+          <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
             {error}
           </p>
         ) : null}
 
         {results ? (
           <>
-            <p className="text-[11px] opacity-50">
-              {results.total} result{results.total === 1 ? '' : 's'} for “{results.query}”
+            <p className="text-[11px] text-[var(--text-subtle)]">
+              {plural(results.total, 'result')} for “{results.query}”
               {results.mode === 'fallback' ? ' · fallback matching' : ''}
             </p>
 
             {results.hits.length === 0 ? (
-              <p className="py-10 text-center text-sm opacity-50">No matches.</p>
+              <p className="py-10 text-center text-sm text-[var(--text-subtle)]">No matches.</p>
             ) : (
               <ul className="space-y-2">
                 {results.hits.map((hit) => (
@@ -179,19 +181,22 @@ function SearchView() {
                       href={`/items/${hit.item_id}${
                         hit.segment_index ? `?segment=${hit.segment_index}` : ''
                       }`}
-                      className="block rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 hover:border-[var(--accent)]/60"
+                      className="block rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 hover:border-[var(--accent-ring)]"
                     >
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-medium">{hit.title}</span>
-                        <span className="shrink-0 rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] uppercase opacity-60">
-                          {hit.source_format}
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-medium text-[var(--text)]">
+                          {hit.title}
                         </span>
+                        <FormatPill format={hit.source_format} className="shrink-0" />
                       </div>
-                      {hit.segment_label ? (
-                        <span className="mb-1 inline-block rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] opacity-60">
-                          {hit.segment_label}
-                        </span>
-                      ) : null}
+                      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                        <PageBadge label={hit.segment_label} />
+                        <TriageBadge status={hit.triage_status} />
+                        <DurationLabel
+                          minutes={hit.est_read_minutes}
+                          className="text-[11px] text-[var(--text-subtle)]"
+                        />
+                      </div>
                       <HighlightedSnippet snippet={hit.snippet} />
                     </Link>
                   </li>
@@ -200,23 +205,23 @@ function SearchView() {
             )}
 
             {results.total > PAGE_SIZE ? (
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
                 <button
                   type="button"
                   disabled={offset === 0}
                   onClick={() => run(query, Math.max(0, offset - PAGE_SIZE))}
-                  className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 disabled:opacity-40"
+                  className="btn-quiet rounded-lg px-2.5 py-1.5"
                 >
                   Previous
                 </button>
-                <span className="opacity-50">
+                <span className="text-[var(--text-subtle)]">
                   {page} / {pages}
                 </span>
                 <button
                   type="button"
                   disabled={page >= pages}
                   onClick={() => run(query, offset + PAGE_SIZE)}
-                  className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 disabled:opacity-40"
+                  className="btn-quiet rounded-lg px-2.5 py-1.5"
                 >
                   Next
                 </button>
@@ -224,7 +229,7 @@ function SearchView() {
             ) : null}
           </>
         ) : !loading ? (
-          <p className="py-10 text-center text-sm opacity-50">
+          <p className="py-10 text-center text-sm text-[var(--text-subtle)]">
             Type a query to find exact pages and segments.
           </p>
         ) : null}

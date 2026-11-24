@@ -14,7 +14,9 @@ import {
   getSavedViews,
   getTags,
 } from '@/lib/api';
-import type { Blueprint, Collection, Item, Tag } from '@/lib/types';
+import { plural } from '@/lib/format';
+import { useLiveData } from '@/lib/sync';
+import type { Blueprint, Collection, Item, SavedView, Tag } from '@/lib/types';
 
 const PAGE_SIZE = 24;
 
@@ -30,7 +32,9 @@ const EMPTY: LibraryFilterState = {
 export default function LibraryPage() {
   return (
     <Suspense
-      fallback={<p className="px-6 py-16 text-center text-sm opacity-50">Loading library…</p>}
+      fallback={
+        <p className="px-6 py-16 text-center text-sm text-[var(--text-subtle)]">Loading library…</p>
+      }
     >
       <LibraryView />
     </Suspense>
@@ -54,13 +58,15 @@ function LibraryView() {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
 
   useEffect(() => {
-    Promise.all([getCollections(), getTags(), getBlueprints()])
-      .then(([cols, tgs, bps]) => {
+    Promise.all([getCollections(), getTags(), getBlueprints(), getSavedViews()])
+      .then(([cols, tgs, bps, views]) => {
         setCollections(cols);
         setTags(tgs);
         setBlueprints(bps);
+        setSavedViews(views);
       })
       .catch(() => setNotice('Catalog unavailable — filters limited.'));
   }, []);
@@ -104,6 +110,9 @@ function LibraryView() {
   }, [filters, offset]);
 
   useEffect(load, [load]);
+  // A capture in the sheet behind this page, or a triage change elsewhere,
+  // re-runs this query without a manual reload.
+  useLiveData(load);
 
   const update = <K extends keyof LibraryFilterState>(
     key: K,
@@ -117,12 +126,19 @@ function LibraryView() {
     const name = lensName.trim();
     if (!name) return;
     try {
-      await createSavedView({ name, kind: 'library', config: { ...filters } });
+      const created = await createSavedView({ name, kind: 'library', config: { ...filters } });
       setLensName('');
+      setSavedViews((prev) => [...prev, created]);
       setNotice(`Lens "${name}" saved.`);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Could not save lens.');
     }
+  };
+
+  const applyLens = (lens: SavedView) => {
+    setOffset(0);
+    setFilters({ ...EMPTY, ...(lens.config as Partial<LibraryFilterState>) });
+    setNotice(`Lens "${lens.name}" applied.`);
   };
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -130,7 +146,7 @@ function LibraryView() {
 
   return (
     <Shell>
-      <div className="space-y-4">
+      <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-lg font-semibold tracking-tight">Library</h1>
           <div className="flex items-center gap-2">
@@ -139,19 +155,23 @@ function LibraryView() {
                 <button
                   key={mode}
                   type="button"
+                  aria-pressed={layout === mode}
                   onClick={() => setLayout(mode)}
                   className={`px-2.5 py-1.5 text-[11px] capitalize ${
-                    layout === mode ? 'bg-[var(--accent)] text-black' : 'opacity-70'
+                    layout === mode
+                      ? 'bg-[var(--surface-2)] text-[var(--text)]'
+                      : 'text-[var(--text-muted)]'
                   }`}
                 >
                   {mode}
                 </button>
               ))}
             </div>
+            {/* Phone users have the centered + in the bottom bar. */}
             <button
               type="button"
               onClick={() => setCapture(true)}
-              className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-black"
+              className="btn-primary hidden rounded-lg px-3 py-1.5 text-xs font-medium md:inline-block"
             >
               Capture
             </button>
@@ -164,6 +184,8 @@ function LibraryView() {
           collections={collections}
           tags={tags}
           blueprints={blueprints}
+          savedViews={savedViews}
+          onApplyLens={applyLens}
           lensName={lensName}
           onLensName={setLensName}
           onSaveLens={saveLens}
@@ -175,31 +197,33 @@ function LibraryView() {
         />
 
         {loading ? (
-          <p className="py-10 text-center text-sm opacity-50">Loading…</p>
+          <p className="py-10 text-center text-sm text-[var(--text-subtle)]">Loading…</p>
         ) : items.length === 0 ? (
-          <p className="py-10 text-center text-sm opacity-50">No items match these filters.</p>
+          <p className="py-10 text-center text-sm text-[var(--text-subtle)]">
+            No items match these filters.
+          </p>
         ) : (
           <LibraryList items={items} layout={layout} />
         )}
 
         {total > PAGE_SIZE ? (
-          <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
             <button
               type="button"
               disabled={offset === 0}
               onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
-              className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 disabled:opacity-40"
+              className="btn-quiet rounded-lg px-2.5 py-1.5"
             >
               Previous
             </button>
-            <span className="opacity-50">
-              {page} / {pages} · {total} items
+            <span className="text-[var(--text-subtle)]">
+              {page} / {pages} · {plural(total, 'item')}
             </span>
             <button
               type="button"
               disabled={page >= pages}
               onClick={() => setOffset((value) => value + PAGE_SIZE)}
-              className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 disabled:opacity-40"
+              className="btn-quiet rounded-lg px-2.5 py-1.5"
             >
               Next
             </button>
