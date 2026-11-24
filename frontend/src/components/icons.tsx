@@ -53,6 +53,24 @@ export function LibraryIcon(props: IconProps) {
   );
 }
 
+export function CollectionsIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M3.5 7.2A1.7 1.7 0 0 1 5.2 5.5h3.4l1.7 2h8.5a1.7 1.7 0 0 1 1.7 1.7v8.1a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z" />
+      <path d="M3.5 10.2h17" />
+    </Base>
+  );
+}
+
+export function StudioIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M12 3.7l1.8 4.2 4.2 1.8-4.2 1.8L12 15.7l-1.8-4.2L6 9.7l4.2-1.8z" />
+      <path d="M17.8 15.3l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z" />
+    </Base>
+  );
+}
+
 export function SearchIcon(props: IconProps) {
   return (
     <Base {...props}>

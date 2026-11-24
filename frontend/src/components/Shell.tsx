@@ -5,11 +5,13 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import OmniCaptureModal from '@/components/OmniCaptureModal';
 import {
+  CollectionsIcon,
   DashboardIcon,
   LibraryIcon,
   PlusIcon,
   SearchIcon,
   SettingsIcon,
+  StudioIcon,
 } from '@/components/icons';
 import { getSavedViews, getWorkspaces } from '@/lib/api';
 import type { SavedView, Workspace } from '@/lib/types';
@@ -25,8 +27,8 @@ const NAV: NavItem[] = [
   { href: '/', label: 'Dashboard', Icon: DashboardIcon },
   { href: '/library', label: 'Library', Icon: LibraryIcon },
   { href: '/search', label: 'Search', Icon: SearchIcon },
-  { href: '/collections', label: 'Collections', Icon: LibraryIcon },
-  { href: '/studio', label: 'Studio', Icon: SearchIcon },
+  { href: '/collections', label: 'Collections', Icon: CollectionsIcon },
+  { href: '/studio', label: 'Studio', Icon: StudioIcon },
   { href: '/settings', label: 'Settings', Icon: SettingsIcon },
 ];
 
@@ -159,7 +161,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 px-4 pt-5 pb-24 md:px-8 md:pb-10">
+      <main className="flex-1 px-4 pb-[calc(var(--nav-height)+env(safe-area-inset-bottom,0px)+0.5rem)] pt-5 md:px-8 md:pb-10">
         <div className="mx-auto w-full max-w-5xl">{children}</div>
       </main>
 
