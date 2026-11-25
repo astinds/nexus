@@ -8,6 +8,9 @@
 
 import type {
   ActivityLog,
+  Annotation,
+  AnnotationCreate,
+  AnnotationUpdate,
   Blueprint,
   BlueprintCreate,
   BlueprintUpdate,
@@ -228,6 +231,33 @@ export const setProgress = (itemId: string, payload: ProgressUpdate) =>
   request<Item>(`/items/${itemId}/progress`, {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+
+// --------------------------------------------------------------- annotations
+export const listAnnotations = (itemId: string, segment?: number | null) =>
+  request<Annotation[]>(
+    `/items/${itemId}/annotations${qs({ segment: segment ?? undefined })}`,
+  );
+
+export const createAnnotation = (itemId: string, payload: AnnotationCreate) =>
+  request<Annotation>(`/items/${itemId}/annotations`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const updateAnnotation = (
+  itemId: string,
+  annotationId: string,
+  payload: AnnotationUpdate,
+) =>
+  request<Annotation>(`/items/${itemId}/annotations/${annotationId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+
+export const deleteAnnotation = (itemId: string, annotationId: string) =>
+  request<{ deleted: boolean }>(`/items/${itemId}/annotations/${annotationId}`, {
+    method: 'DELETE',
   });
 
 export const replaceNoteContent = (itemId: string, content: string) =>

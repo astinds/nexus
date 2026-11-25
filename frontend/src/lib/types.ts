@@ -125,6 +125,38 @@ export interface Segment {
   created_at: string;
 }
 
+// -----------------------------------------------------------------------------
+// Annotations (annotations.py) — page-anchored reader notes and highlights
+// -----------------------------------------------------------------------------
+
+export interface Annotation {
+  id: string;
+  item_id: string;
+  segment_index: number | null;
+  segment_label: string | null;
+  quote_text: string | null;
+  note_body: string;
+  color: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnnotationCreate {
+  segment_index?: number | null;
+  segment_label?: string | null;
+  quote_text?: string | null;
+  note_body?: string;
+  color?: string;
+}
+
+export interface AnnotationUpdate {
+  segment_index?: number | null;
+  segment_label?: string | null;
+  quote_text?: string | null;
+  note_body?: string;
+  color?: string;
+}
+
 export interface SegmentIntegrity {
   segments: number;
   pages: number;

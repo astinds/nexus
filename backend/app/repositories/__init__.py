@@ -6,6 +6,7 @@ raise HTTP errors and never build request-specific SQL strings.
 
 from . import (  # noqa: F401
     activity,
+    annotations,
     base,
     blueprints,
     collections,
@@ -18,6 +19,7 @@ from . import (  # noqa: F401
 
 __all__ = [
     "activity",
+    "annotations",
     "base",
     "blueprints",
     "collections",

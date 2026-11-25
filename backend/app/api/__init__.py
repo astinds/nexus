@@ -5,11 +5,13 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from . import catalog, ingest, items, search, studio, system
+from .annotations import router as annotations_router
 
 api_router = APIRouter()
 api_router.include_router(system.router)
 api_router.include_router(catalog.router)
 api_router.include_router(items.router)
+api_router.include_router(annotations_router)
 api_router.include_router(studio.router)
 api_router.include_router(ingest.router)
 api_router.include_router(search.router)

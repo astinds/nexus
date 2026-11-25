@@ -7,6 +7,7 @@ import Shell from '@/components/Shell';
 import { ingestText, ingestUrl } from '@/lib/api';
 import { notifyDataChanged } from '@/lib/sync';
 import type { IngestResult } from '@/lib/types';
+import { formatLabel, plural } from '@/lib/format';
 
 /**
  * Web Share Target landing page.
@@ -140,8 +141,12 @@ function CaptureForm() {
         {result ? (
           <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs">
             <p>
-              Saved <span className="font-medium">{result.item.title}</span>
-              {result.segments_created ? ` · ${result.segments_created} segments` : ''}
+              Saved <span className="font-medium">{formatLabel(result.item.source_format)}</span>
+              {' · '}
+              <span className="font-medium">{result.item.title}</span>
+              {result.segments_created
+                ? ` · ${plural(result.segments_created, 'segment')}`
+                : ''}
             </p>
             {result.duplicate ? (
               <p className="text-amber-300">This content already existed — duplicate capture.</p>

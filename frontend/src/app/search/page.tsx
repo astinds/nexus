@@ -178,9 +178,10 @@ function SearchView() {
                 {results.hits.map((hit) => (
                   <li key={`${hit.item_id}-${hit.segment_id ?? 'item'}`}>
                     <Link
-                      href={`/items/${hit.item_id}${
-                        hit.segment_index ? `?segment=${hit.segment_index}` : ''
-                      }`}
+                      href={`/items/${hit.item_id}?${new URLSearchParams({
+                        ...(hit.segment_index ? { segment: String(hit.segment_index) } : {}),
+                        ...(query.trim() ? { q: query.trim() } : {}),
+                      }).toString()}`}
                       className="block rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 hover:border-[var(--accent-ring)]"
                     >
                       <div className="mb-1.5 flex items-center justify-between gap-2">

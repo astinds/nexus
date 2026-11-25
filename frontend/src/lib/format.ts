@@ -76,10 +76,15 @@ export function durationLabel(minutes: number | null | undefined): string | null
   return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
 }
 
+/** `109933` -> `109,933`, so a long book does not read as a serial number. */
+export function formatCount(value: number | null | undefined): string {
+  return Math.round(Number(value ?? 0)).toLocaleString('en-US');
+}
+
 /** `1 segment` / `3 segments` — never `segment(s)`. */
 export function plural(count: number, singular: string, pluralForm?: string): string {
   const word = Math.abs(count) === 1 ? singular : pluralForm ?? `${singular}s`;
-  return `${count} ${word}`;
+  return `${formatCount(count)} ${word}`;
 }
 
 /** Shorthand that reads naturally in a sentence: `1 scanned segment · 1 failure`. */

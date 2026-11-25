@@ -7,7 +7,7 @@ import OmniCaptureModal from '@/components/OmniCaptureModal';
 import { ChevronRightIcon } from '@/components/icons';
 import { DurationLabel, FormatPill } from '@/components/ui/badges';
 import { getDashboard } from '@/lib/api';
-import { countParts, formatLabel, relativeTime, resumeLabel } from '@/lib/format';
+import { countParts, formatLabel, relativeTime, resumeLabel, triageLabel } from '@/lib/format';
 import { useLiveData } from '@/lib/sync';
 import type { ActivityLog, DashboardStats, Item } from '@/lib/types';
 
@@ -86,7 +86,12 @@ function activityNote(entry: ActivityLog, titleKnown: boolean): string {
     'link.deleted': 'Unlinked',
   };
   if (short[entry.kind]) return short[entry.kind];
-  if (entry.kind === 'item.triage') return entry.message.replace('->', '→');
+  if (entry.kind === 'item.triage') {
+    // "Triage -> cold_archive" must read "Triage → Archive": the raw enum is
+    // an implementation detail leaking into a human log line.
+    const target = entry.message.split('->').pop()?.trim() ?? '';
+    return `Triage → ${target ? triageLabel(target) : ''}`.trim();
+  }
   return formatLabel(entry.kind.replace('.', ' '));
 }
 

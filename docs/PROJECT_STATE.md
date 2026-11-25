@@ -3,12 +3,14 @@
 Update this file at the end of **every** stage. A future model must be able to resume
 from this page alone.
 
-Last updated: Stage 6.3 (live PDF upload incident: 500 / 502 / 120 s timeout fixed).
+Last updated: Stage 6.3 complete (reader overhaul, Markdown rendering, annotations).
 Repository: https://github.com/astinds/nexus (branch `main`)
 Stage 5A commit: `a51ed8a`
 Stage 5B commit: `94d4f1c`
 Stage 6 commit: `31216b0`
 Stage 6.1 commit: `c4de5de` (pre-deploy patch), CI fixes: `95dafe4`, `e9079cd`, `fc7dcce`
+Stage 6.2 P1 commit: `b0510f8` (cold-start resilience)
+Stage 6.2 P2 commit: `17a8700` (PDF edge cases, 512 MB budget)
 
 ## Live database — APPLIED
 
@@ -22,7 +24,7 @@ and verified:
 | `item_segments_search_idx` | `USING gin (search_vector)` |
 | Seeds | workspaces 1, relation_types 7, prompt_templates 3, preferences 1 |
 | Functions | `nexus_touch_updated_at`, `nexus_collection_tree` |
-| `schema_migrations` | 3 rows, checksums match the files |
+| `schema_migrations` | 4 rows after `004_annotations` (checksums match the files) |
 
 **Two runner bugs were found by finally running it against a real server** (it had
 never executed end-to-end before):
@@ -65,6 +67,7 @@ frontend job, so `scripts/next.mjs` skips the WASM preload and Next uses
 | 6 | Self-verifying smoke test & handoff docs | ✅ complete |
 | 6.2 P1 | CI & cold-start resilience (keep-alive, CORS, fetch timeouts/retry) | ✅ complete |
 | 6.2 P2 | PDF edge-case & 512 MB memory safety | ✅ complete |
+| 6.3 | Reader overhaul, Markdown rendering & in-reader study flow | ✅ complete |
 
 ---
 
@@ -156,6 +159,55 @@ npm run build                exit 0 — 10 routes, 84.5 kB shared
 
 The encrypted-PDF fixture uses RC4 rather than AES: AES needs the optional
 `cryptography` package, and both are equally "needs a password" to the extractor.
+
+---
+
+## Stage 6.3 — Reader Overhaul, Markdown Rendering & Study Flow
+
+**Live database: migration `004_annotations` applied.** Verified on Supabase:
+`annotations` table present with 9 columns, indexes `annotations_item_idx` and
+`annotations_item_created_idx`, trigger `annotations_touch_updated_at`.
+`apply_migrations.py --verify` → `applied: 4 pending: 0`.
+
+### What changed
+
+| Area | Change |
+|---|---|
+| Reader shell | Admin cards (triage, collections, tags, prompts, export, blueprint, links, delete) moved into `ManageSheet`; the reader keeps only a triage pill, a mode toggle, focus and Manage |
+| Extraction notice | `IntegrityBanner` (full amber card) replaced by `IntegrityPill`: one muted line (`271/278 pages searchable · Details`) that expands; amber only when pages actually *failed* |
+| Header formatting | `durationLabel` → `9h 10m`, `formatCount` → `109,933 words`, `plural` → `1 scanned page` |
+| Dashboard | `Triage -> cold_archive` now reads `Triage → Archive` |
+| Capture banner | shows the format label (`Note`) and `plural` segments instead of a raw format and `N segments` |
+| Settings | `System health` and `API reference` use `Accordion` with `defaultOpen` omitted, so both start collapsed (verified: no `defaultOpen` in the page) |
+| PDF reader | Reflow ⇄ PDF toggle. Reflow joins soft line breaks and heals display hyphens (`fanat- ically` → `fanatically`) at render time only; page line, progress bar, Prev/Next and scrubber |
+| PDF mode | Page scrubber, tappable `14 / 278` badge that accepts a typed number, swipe left/right (only at fit width), `−/Fit/+` zoom with pan, night filter (`invert(0.9) hue-rotate(180deg)`), ±1 page prefetch of page *objects* only |
+| Focus mode | `⤢` hides chrome; tapping the reading area toggles a floating HUD with exit, mode, scrubber, Notes and Manage |
+| Progress | Debounced (900 ms) `POST /progress`, so Continue Reading resumes the exact page |
+| Search jumps | Search links now carry `segment` **and** `q`; the reader opens at that page and `<mark>`s the term in Reflow |
+| Markdown | `lib/markdown.ts` parses h1–h4, bold/italic/inline code, links, bullet/numbered/task lists, quotes, fences and rules; `MarkdownView` renders tokens as React nodes — no `dangerouslySetInnerHTML`, unsafe hrefs dropped |
+| Note editing | `NoteEditor` is full-height with **Write | Preview** and a sticky Save/Cancel bar |
+| Annotations | New `annotations` table + `GET/POST/PATCH/DELETE /api/v1/items/{id}/annotations`, scoped to the item; `NotesSheet` filters *This page* vs *All pages* and jumps to a note's page |
+
+### Verification
+
+```
+pytest                                        192 passed
+pyflakes backend/app backend/tests scripts    exit 0, no output
+npm run typecheck                             exit 0
+npm run build                                 exit 0 — 10 routes, 84.5 kB shared
+npm run check:helpers                         passed (reader + markdown added)
+```
+
+`/items/[id]` grew from 2.0 kB to 11.5 kB of route code (111 kB first load). That is
+the whole reader: two PDF modes, the notes sheet, the manage sheet and the focus HUD.
+
+### Not done / still manual
+
+- Render has **no deployed service yet** (no `NEXUS_HEALTH_URL` secret, no service ID),
+  so "watch Render until `/api/v1/health` is green" cannot be executed from here.
+- Migration `004` is applied to the live database but **not yet exercised through
+  the HTTP endpoints**, because that needs a running backend with `DATABASE_URL`.
+
 
 ---
 
